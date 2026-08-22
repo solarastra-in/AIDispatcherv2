@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://ai.whyor.in/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>https://ai.whyor.in/how-it-works</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://ai.whyor.in/capabilities</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://ai.whyor.in/examples</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <!--
+    /workspace, /company/*, and /admin are intentionally excluded — they
+    require authentication and render nothing for an unauthenticated
+    crawler (per the permissions patch), so including them here would
+    just be noise search engines can't index anyway.
+
+    Anchor entries (#how, #ledger, #access) from the previous version of
+    this file are removed now that /how-it-works and /capabilities exist
+    as real, separately-routed pages covering the same content with much
+    stronger SEO weight — search engines index the page a crawler lands
+    on, not an anchor fragment.
+  -->
+</urlset>

@@ -1,0 +1,218 @@
+{
+  "entities": {
+    "UserProfile": {
+      "collection": "users",
+      "fields": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "email": { "type": "string", "description": "User email address" },
+        "displayName": { "type": "string", "description": "Display name" },
+        "photoURL": { "type": "string", "description": "Avatar photo URL" },
+        "role": { "type": "string", "description": "User role: superadmin, admin, developer, auditor" },
+        "createdAt": { "type": "string", "description": "Creation timestamp" },
+        "lastLoginAt": { "type": "string", "description": "Last login timestamp" }
+      }
+    },
+    "CompanyCredential": {
+      "collection": "credentials",
+      "fields": {
+        "provider": { "type": "string", "description": "AI provider ID (google, openai, anthropic, etc.)" },
+        "providerDisplayName": { "type": "string", "description": "Display name" },
+        "authMethod": { "type": "string", "description": "api_key or subscription_oauth or cli_daemon" },
+        "hasKey": { "type": "boolean", "description": "Whether API key is configured" },
+        "hasSubscription": { "type": "boolean", "description": "Whether subscription is active" },
+        "subscriptionTier": { "type": "string", "description": "Subscription tier" },
+        "subscriptionEmail": { "type": "string", "description": "Bound email account" },
+        "monthlyFlatRateCostUsd": { "type": "number", "description": "Flat monthly cost" },
+        "monthlySpendLimitUsd": { "type": "number", "description": "Budget limit" },
+        "baseUrl": { "type": "string", "description": "Custom endpoint base URL" },
+        "organizationId": { "type": "string", "description": "Organization ID" },
+        "status": { "type": "string", "description": "connected, unconfigured, error" },
+        "updatedAt": { "type": "string", "description": "Last updated timestamp" }
+      }
+    },
+    "SmtpSettings": {
+      "collection": "smtp_settings",
+      "fields": {
+        "id": { "type": "string", "description": "Settings record ID" },
+        "host": { "type": "string", "description": "SMTP host address (e.g. smtp.gmail.com, smtp.sendgrid.net)" },
+        "port": { "type": "number", "description": "SMTP port (587, 465, 25)" },
+        "secure": { "type": "boolean", "description": "Whether to use SSL/TLS directly (port 465)" },
+        "requireTls": { "type": "boolean", "description": "Whether STARTTLS is required" },
+        "user": { "type": "string", "description": "SMTP username or account email" },
+        "passMasked": { "type": "string", "description": "Masked representation of password / app password" },
+        "fromEmail": { "type": "string", "description": "Default Sender Email" },
+        "fromName": { "type": "string", "description": "Sender Display Name (e.g. WhyOr Dispatch AI)" },
+        "replyTo": { "type": "string", "description": "Reply-To address" },
+        "isVerified": { "type": "boolean", "description": "Whether SMTP handshake is verified" },
+        "lastVerifiedAt": { "type": "string", "description": "Last verification timestamp" },
+        "updatedAt": { "type": "string", "description": "Last configuration update" }
+      }
+    },
+    "EmailLog": {
+      "collection": "email_logs",
+      "fields": {
+        "id": { "type": "string", "description": "Unique email log ID" },
+        "to": { "type": "string", "description": "Recipient email" },
+        "from": { "type": "string", "description": "Sender email" },
+        "subject": { "type": "string", "description": "Email subject" },
+        "emailType": { "type": "string", "description": "test_verification, quota_alert, audit_report, dispatch_alert" },
+        "status": { "type": "string", "description": "sent, failed, queued" },
+        "messageId": { "type": "string", "description": "SMTP server message ID" },
+        "errorMessage": { "type": "string", "description": "Error details if failed" },
+        "sentAt": { "type": "string", "description": "Timestamp" },
+        "sentBy": { "type": "string", "description": "User who triggered email" }
+      }
+    },
+    "DispatchLedgerEntry": {
+      "collection": "dispatch_ledger",
+      "fields": {
+        "id": { "type": "string", "description": "Dispatch record ID" },
+        "taskId": { "type": "string", "description": "Unique task identifier" },
+        "prompt": { "type": "string", "description": "Dispatched prompt" },
+        "modelChosen": { "type": "string", "description": "Selected model" },
+        "provider": { "type": "string", "description": "Selected provider" },
+        "routingStrategy": { "type": "string", "description": "Strategy applied" },
+        "dispatchedVia": { "type": "string", "description": "company_subscription_gateway or direct_company_byok" },
+        "costUsd": { "type": "number", "description": "Actual cost billed" },
+        "tokensSavedUsd": { "type": "number", "description": "Estimated cost avoided" },
+        "latencyMs": { "type": "number", "description": "Execution latency" },
+        "status": { "type": "string", "description": "success, failover, error" },
+        "timestamp": { "type": "string", "description": "Execution timestamp" }
+      }
+    },
+    "ContextSession": {
+      "collection": "context_sessions",
+      "fields": {
+        "id": { "type": "string", "description": "Session ID" },
+        "title": { "type": "string", "description": "Session title" },
+        "persistenceMode": { "type": "string", "description": "firestore_cloud or local_transient" },
+        "totalTokens": { "type": "number", "description": "Active token count" },
+        "hashChain": { "type": "string", "description": "Cryptographic ledger hash" },
+        "blocks": { "type": "array", "description": "Context AST & prompt blocks" },
+        "updatedAt": { "type": "string", "description": "Update timestamp" }
+      }
+    },
+    "AuditLog": {
+      "collection": "audit_logs",
+      "fields": {
+        "id": { "type": "string", "description": "Audit ID" },
+        "action": { "type": "string", "description": "Action performed" },
+        "category": { "type": "string", "description": "security, credentials, smtp, dispatch, onboarding" },
+        "actor": { "type": "string", "description": "User email or system" },
+        "details": { "type": "string", "description": "Summary of change" },
+        "timestamp": { "type": "string", "description": "Event timestamp" }
+      }
+    },
+    "Company": {
+      "collection": "companies",
+      "fields": {
+        "id": { "type": "string", "description": "Company Unique ID" },
+        "name": { "type": "string", "description": "Company Legal Name" },
+        "domain": { "type": "string", "description": "Corporate email domain (e.g. solarastra.in)" },
+        "industry": { "type": "string", "description": "Industry domain" },
+        "tier": { "type": "string", "description": "Subscription tier: enterprise, growth, startup" },
+        "billingEmail": { "type": "string", "description": "Primary billing and alert email" },
+        "monthlyTokenQuota": { "type": "number", "description": "Monthly token allocation" },
+        "monthlyTokensUsed": { "type": "number", "description": "Consumed tokens in current cycle" },
+        "monthlyBudgetUsd": { "type": "number", "description": "Monthly spend cap in USD" },
+        "allowedModels": { "type": "array", "description": "Array of allowed model IDs" },
+        "routingPriority": { "type": "string", "description": "subscription_first, byok_first, balanced" },
+        "smtpAlertsEnabled": { "type": "boolean", "description": "Whether SMTP notifications are active" },
+        "superAdminEmail": { "type": "string", "description": "Super admin who onboarded the company" },
+        "status": { "type": "string", "description": "active, paused, suspended" },
+        "createdAt": { "type": "string", "description": "Creation timestamp" },
+        "updatedAt": { "type": "string", "description": "Update timestamp" }
+      }
+    },
+    "Team": {
+      "collection": "teams",
+      "fields": {
+        "id": { "type": "string", "description": "Team identifier" },
+        "companyId": { "type": "string", "description": "Parent company reference ID" },
+        "companyName": { "type": "string", "description": "Parent company name" },
+        "name": { "type": "string", "description": "Department or team name" },
+        "leadEmail": { "type": "string", "description": "Team lead email" },
+        "tierCap": { "type": "string", "description": "Maximum allowed model tier (frontier, mid, economy)" },
+        "monthlyTokenQuota": { "type": "number", "description": "Team monthly token quota" },
+        "monthlyTokensUsed": { "type": "number", "description": "Team consumed tokens" },
+        "monthlyBudgetUsd": { "type": "number", "description": "Team budget in USD" },
+        "allowedModels": { "type": "array", "description": "Allowlisted model IDs for this team" },
+        "members": { "type": "array", "description": "List of team member objects with email, role, token cap" },
+        "createdAt": { "type": "string", "description": "Creation timestamp" },
+        "updatedAt": { "type": "string", "description": "Update timestamp" }
+      }
+    },
+    "EmailTemplate": {
+      "collection": "email_templates",
+      "fields": {
+        "id": { "type": "string", "description": "Template identifier: billing_budget_warning, billing_invoice, system_failover, system_security_audit, onboarding_invite, test_verification" },
+        "name": { "type": "string", "description": "Template Display Name" },
+        "category": { "type": "string", "description": "billing, system, security, onboarding, verification" },
+        "subject": { "type": "string", "description": "Customizable email subject with template variables" },
+        "htmlBody": { "type": "string", "description": "Customizable responsive HTML email body template" },
+        "textBody": { "type": "string", "description": "Plain text fallback email body" },
+        "description": { "type": "string", "description": "Brief description of when this notification fires" },
+        "variables": { "type": "array", "description": "Supported placeholder tokens for variable interpolation" },
+        "updatedAt": { "type": "string", "description": "Last updated timestamp" },
+        "updatedBy": { "type": "string", "description": "SuperAdmin email who updated the template" }
+      }
+    },
+    "UserTrial": {
+      "collection": "user_trials",
+      "fields": {
+        "uid": { "type": "string", "description": "User UID or Auth identifier" },
+        "email": { "type": "string", "description": "User email address" },
+        "displayName": { "type": "string", "description": "User display name" },
+        "plan": { "type": "string", "description": "free_trial, pro, enterprise" },
+        "planType": { "type": "string", "description": "Plan type" },
+        "isPaidPlan": { "type": "boolean", "description": "Whether user is on a paid plan" },
+        "signupDate": { "type": "string", "description": "Signup ISO date" },
+        "trialStartDate": { "type": "string", "description": "Trial start ISO date" },
+        "trialEndDate": { "type": "string", "description": "Trial end ISO date" },
+        "trialDaysTotal": { "type": "number", "description": "7 days allocation" },
+        "daysRemaining": { "type": "number", "description": "Days remaining on trial" },
+        "isTrialActive": { "type": "boolean", "description": "Whether trial is currently valid" },
+        "isExpired": { "type": "boolean", "description": "Whether trial has expired" },
+        "hasConfiguredByok": { "type": "boolean", "description": "Whether user configured their own keys" },
+        "dailyTokensUsed": { "type": "number", "description": "Tokens consumed today" },
+        "dailyTokenLimit": { "type": "number", "description": "Daily token quota" },
+        "totalTokensProcessed": { "type": "number", "description": "Cumulative tokens" },
+        "totalDispatches": { "type": "number", "description": "Count of task dispatches" },
+        "updatedAt": { "type": "string", "description": "Update timestamp" }
+      }
+    },
+    "AdminKeyConfig": {
+      "collection": "admin_ai_keys",
+      "fields": {
+        "id": { "type": "string", "description": "Unique key identifier" },
+        "provider": { "type": "string", "description": "gemini, anthropic, openai, deepseek, groq, mistral" },
+        "providerDisplayName": { "type": "string", "description": "Human readable provider label" },
+        "keyMasked": { "type": "string", "description": "Masked representation of API key" },
+        "isActive": { "type": "boolean", "description": "Whether key is currently active" },
+        "status": { "type": "string", "description": "active, budget_exceeded, day_limit_exceeded, disabled" },
+        "monthlyBudgetCents": { "type": "number", "description": "Monthly budget in USD" },
+        "currentMonthlySpendUsd": { "type": "number", "description": "Current month spend in USD" },
+        "dailyUsageLimitUsd": { "type": "number", "description": "Daily max spend in USD" },
+        "todaySpendUsd": { "type": "number", "description": "Today spend in USD" },
+        "isBudgetOver": { "type": "boolean", "description": "Whether monthly budget is exceeded" },
+        "isDayUsageOver": { "type": "boolean", "description": "Whether daily usage limit is exceeded" },
+        "alertEmailSent": { "type": "boolean", "description": "Whether email alert was dispatched" },
+        "lastUpdated": { "type": "string", "description": "Last modified timestamp" }
+      }
+    },
+    "ContactInquiry": {
+      "collection": "contact_inquiries",
+      "fields": {
+        "id": { "type": "string", "description": "Inquiry identifier" },
+        "name": { "type": "string", "description": "Sender name" },
+        "email": { "type": "string", "description": "Sender email" },
+        "company": { "type": "string", "description": "Company name" },
+        "phone": { "type": "string", "description": "Contact phone number" },
+        "topic": { "type": "string", "description": "enterprise_quote, custom_onprem, sla_security, byok_integration, billing_api, general" },
+        "message": { "type": "string", "description": "Inquiry message content" },
+        "status": { "type": "string", "description": "new, in_review, contacted, resolved, closed" },
+        "createdAt": { "type": "string", "description": "Submission ISO timestamp" }
+      }
+    }
+  }
+}
