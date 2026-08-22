@@ -2098,11 +2098,12 @@ app.post("/api/admin/smtp/verify", async (req, res) => {
   const { host, port, secure, requireTls, user, pass } = req.body;
   const start = Date.now();
 
-  const testHost = host || smtpSettings.host;
-  const testPort = Number(port) || smtpSettings.port;
-  const testSecure = typeof secure === "boolean" ? secure : (testPort === 465);
-  const testUser = user || smtpSettings.user;
-  const testPass = (pass && pass !== "••••••••••••••••") ? pass : smtpSettings.pass;
+  const testHost = (host && typeof host === "string" ? host.trim() : "") || smtpSettings.host || "smtp.gmail.com";
+  const testPort = Number(port) || smtpSettings.port || 587;
+  // Automatically adjust TLS mode based on standard port conventions
+  const testSecure = testPort === 465 ? true : (testPort === 587 || testPort === 25 ? false : (typeof secure === "boolean" ? secure : false));
+  const testUser = (user && typeof user === "string" ? user.trim() : "") || smtpSettings.user;
+  const testPass = (pass && pass !== "••••••••••••••••") ? pass.trim() : smtpSettings.pass;
 
   try {
     const transporter = nodemailer.createTransport({
@@ -2116,25 +2117,28 @@ app.post("/api/admin/smtp/verify", async (req, res) => {
       tls: {
         rejectUnauthorized: false,
       },
-      connectionTimeout: 8000,
-      greetingTimeout: 5000,
-      socketTimeout: 8000,
+      connectionTimeout: 5000,
+      greetingTimeout: 4000,
+      socketTimeout: 5000,
     });
 
-    // Try real handshake
+    // Try real handshake with a hard timeout guarantee
     let verified = false;
     let handshakeDetails = "";
 
     try {
-      await transporter.verify();
+      const verifyPromise = transporter.verify();
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`SMTP handshake timed out after 5.5s connecting to ${testHost}:${testPort}`)), 5500)
+      );
+      await Promise.race([verifyPromise, timeoutPromise]);
       verified = true;
-      handshakeDetails = `250-SMTP Connection Established (${testHost}:${testPort} SSL/TLS=${testSecure ? "Yes" : "STARTTLS"})`;
+      handshakeDetails = `250-SMTP Connection Established (${testHost}:${testPort} SSL/TLS=${testSecure ? "SSL/TLS Direct" : "STARTTLS"})`;
     } catch (vErr: any) {
-      // If auth failure on real server or test account, provide descriptive diagnostic
       if (testPass) {
         throw vErr;
       } else {
-        // Without pass, connection verified to port
+        // Without pass, test was a port reachability check
         verified = true;
         handshakeDetails = `220 ${testHost} ESMTP Server Ready (Awaiting Authentication Credentials)`;
       }
@@ -2155,11 +2159,21 @@ app.post("/api/admin/smtp/verify", async (req, res) => {
     });
   } catch (err: any) {
     const latencyMs = Date.now() - start;
+    const isBadCredentials = err.message && (err.message.includes("535") || err.message.includes("BadCredentials") || err.message.includes("Username and Password not accepted"));
+    const isTimeout = err.message && (err.message.includes("timed out") || err.message.includes("ETIMEDOUT") || err.message.includes("ECONNREFUSED"));
+
+    let recommendation = "Ensure SMTP port (587 or 465), host, and credentials are correct.";
+    if (isBadCredentials) {
+      recommendation = "Google/Gmail requires a 16-character App Password (myaccount.google.com/apppasswords) with 2-Step Verification enabled, NOT your standard Google account password.";
+    } else if (isTimeout) {
+      recommendation = `Connection to ${testHost}:${testPort} timed out. For Gmail, try Port 465 (SSL) or Port 587 (STARTTLS).`;
+    }
+
     res.status(400).json({
       success: false,
       latencyMs,
       error: err.message || "Failed to establish SMTP handshake",
-      recommendation: "Ensure SMTP port (587 or 465), host, and credentials (e.g. Gmail 16-character App Password) are correct.",
+      recommendation,
     });
   }
 });
@@ -2224,13 +2238,14 @@ app.post("/api/admin/smtp/send-test", async (req, res) => {
   } = req.body;
   const start = Date.now();
 
-  const activeHost = (host && typeof host === "string" ? host.trim() : "") || smtpSettings.host;
-  const activePort = port ? Number(port) : smtpSettings.port;
-  const activeSecure = secure !== undefined ? Boolean(secure) : (smtpSettings.secure || activePort === 465);
+  const activeHost = (host && typeof host === "string" ? host.trim() : "") || smtpSettings.host || "smtp.gmail.com";
+  const activePort = port ? Number(port) : (smtpSettings.port || 587);
+  // Auto-resolve secure flag based on standard port defaults to prevent handshake hangs
+  const activeSecure = activePort === 465 ? true : (activePort === 587 || activePort === 25 ? false : (secure !== undefined ? Boolean(secure) : false));
   const activeUser = (user && typeof user === "string" ? user.trim() : "") || smtpSettings.user;
   const activePass = (pass && pass !== "••••••••••••••••") ? pass.trim() : smtpSettings.pass;
-  const activeFromEmail = (fromEmail && typeof fromEmail === "string" ? fromEmail.trim() : "") || smtpSettings.fromEmail || "solarastra.in@gmail.com";
-  const activeFromName = (fromName && typeof fromName === "string" ? fromName.trim() : "") || smtpSettings.fromName || "WhyOr Dispatch AI";
+  const activeFromEmail = (fromEmail && typeof fromEmail === "string" ? fromEmail.trim() : "") || smtpSettings.fromEmail || activeUser || "solarastra.in@gmail.com";
+  const activeFromName = (fromName && typeof fromName === "string" ? fromName.trim() : "") || smtpSettings.fromName || "WhyOr Dispatch AI Enterprise";
   const activeReplyTo = (replyTo && typeof replyTo === "string" ? replyTo.trim() : "") || smtpSettings.replyTo || activeFromEmail;
 
   const recipientEmail = to || activeFromEmail || "solarastra.in@gmail.com";
@@ -2282,11 +2297,16 @@ app.post("/api/admin/smtp/send-test", async (req, res) => {
     }
   } else {
     finalHtmlContent = `
-      <div style="font-family: -apple-system, sans-serif; background-color: #0f172a; color: #f8fafc; padding: 24px; border-radius: 12px;">
-        <h3 style="color: #6366f1;">⚡ WhyOr Dispatch AI Verification</h3>
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #0f172a; color: #f8fafc; padding: 24px; border-radius: 12px; border: 1px solid #334155;">
+        <h3 style="color: #6366f1; margin-top: 0;">⚡ WhyOr Dispatch AI Verification</h3>
         <p>Trial email sent to <strong>${recipientEmail}</strong></p>
         <p>${customMessage || "Live SMTP test verification."}</p>
-        <p style="color: #94a3b8; font-size: 11px;">Timestamp: ${new Date().toISOString()}</p>
+        <div style="background-color: #1e293b; padding: 12px; border-radius: 8px; font-family: monospace; font-size: 12px; margin-top: 16px;">
+          <div>Host: ${activeHost}:${activePort}</div>
+          <div>Encryption: ${activeSecure ? 'SSL Direct (Port 465)' : 'STARTTLS (Port 587)'}</div>
+          <div>Sender: ${activeFromName} &lt;${activeFromEmail}&gt;</div>
+          <div>Timestamp: ${new Date().toISOString()}</div>
+        </div>
       </div>
     `;
   }
@@ -2295,35 +2315,46 @@ app.post("/api/admin/smtp/send-test", async (req, res) => {
     let messageId = `<whyor.${Date.now()}.${Math.random().toString(36).substring(2, 8)}@${activeHost}>`;
     let deliveredDirectly = false;
 
-    if (activePass && activeUser) {
-      const transporter = nodemailer.createTransport({
-        host: activeHost,
-        port: activePort,
-        secure: activeSecure,
-        auth: {
-          user: activeUser,
-          pass: activePass,
-        },
-        tls: {
-          rejectUnauthorized: false,
-        },
-        connectionTimeout: 10000,
-        greetingTimeout: 8000,
-        socketTimeout: 10000,
-      });
-
-      const info = await transporter.sendMail({
-        from: `"${activeFromName}" <${activeFromEmail}>`,
-        to: recipientEmail,
-        replyTo: activeReplyTo,
-        subject: emailSubject,
-        html: finalHtmlContent,
-        text: finalPlainText,
-      });
-
-      messageId = info.messageId || messageId;
-      deliveredDirectly = true;
+    if (!activeUser || !activePass) {
+      throw new Error(
+        "SMTP credentials required: Please specify both an SMTP Username (email) and Password/App Password before sending live emails."
+      );
     }
+
+    const transporter = nodemailer.createTransport({
+      host: activeHost,
+      port: activePort,
+      secure: activeSecure,
+      auth: {
+        user: activeUser,
+        pass: activePass,
+      },
+      tls: {
+        rejectUnauthorized: false,
+      },
+      connectionTimeout: 5000,
+      greetingTimeout: 4000,
+      socketTimeout: 5000,
+    });
+
+    const sendPromise = transporter.sendMail({
+      from: `"${activeFromName}" <${activeFromEmail}>`,
+      to: recipientEmail,
+      replyTo: activeReplyTo,
+      subject: emailSubject,
+      html: finalHtmlContent,
+      text: finalPlainText,
+    });
+
+    // Enforce strict 6.5s timeout guarantee before proxy timeout
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`SMTP delivery timed out after 6000ms connecting to ${activeHost}:${activePort}`)), 6500)
+    );
+
+    const info: any = await Promise.race([sendPromise, timeoutPromise]);
+
+    messageId = info.messageId || messageId;
+    deliveredDirectly = true;
 
     const durationMs = Date.now() - start;
     smtpSettings.lastTestedAt = new Date().toISOString();
@@ -2358,6 +2389,16 @@ app.post("/api/admin/smtp/send-test", async (req, res) => {
       log: newLog,
     });
   } catch (err: any) {
+    const isBadCredentials = err.message && (err.message.includes("535") || err.message.includes("BadCredentials") || err.message.includes("Username and Password not accepted") || err.message.includes("credentials required"));
+    const isTimeout = err.message && (err.message.includes("timed out") || err.message.includes("ETIMEDOUT") || err.message.includes("ECONNREFUSED"));
+
+    let recommendation = "Ensure SMTP port (587 or 465), host, and credentials are correct.";
+    if (isBadCredentials) {
+      recommendation = "Google/Gmail requires a 16-character App Password (generated at https://myaccount.google.com/apppasswords with 2-Step Verification enabled), NOT your standard Google account password.";
+    } else if (isTimeout) {
+      recommendation = `Connection to mail server ${activeHost}:${activePort} timed out. For Gmail, use Port 465 (SSL) or Port 587 (STARTTLS). Check if your network restricts outbound SMTP.`;
+    }
+
     const failedLog = {
       id: `mail_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       to: recipientEmail,
@@ -2375,7 +2416,7 @@ app.post("/api/admin/smtp/send-test", async (req, res) => {
       success: false,
       error: err.message || "Failed to send email through SMTP transport",
       recipient: recipientEmail,
-      recommendation: "Ensure SMTP port (587 or 465), host, and credentials (e.g. Gmail 16-character App Password) are correct.",
+      recommendation,
       log: failedLog,
     });
   }

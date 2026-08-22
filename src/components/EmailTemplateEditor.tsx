@@ -256,7 +256,12 @@ export const EmailTemplateEditor: React.FC<EmailTemplateEditorProps> = ({
             sentBy: `SuperAdmin (${currentUserEmail})`,
           }),
         });
-        data = await res.json();
+        if (res.headers.get('content-type')?.includes('application/json')) {
+          data = await res.json();
+        } else {
+          const rawText = await res.text().catch(() => '');
+          data = { success: false, error: rawText.slice(0, 150) || `HTTP ${res.status} Error` };
+        }
       }
 
       if (data.success) {

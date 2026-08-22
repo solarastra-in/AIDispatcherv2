@@ -189,7 +189,13 @@ export const AdminCustomersPortal: React.FC<AdminCustomersPortalProps> = ({
           sentBy: auth.currentUser?.email || 'Admin Superuser'
         })
       });
-      const data = await res.json();
+      let data: any = null;
+      if (res.headers.get('content-type')?.includes('application/json')) {
+        data = await res.json();
+      } else {
+        const rawText = await res.text().catch(() => '');
+        data = { success: false, error: rawText.slice(0, 150) || `HTTP ${res.status}` };
+      }
       if (data.success) {
         setNotification({
           type: 'success',

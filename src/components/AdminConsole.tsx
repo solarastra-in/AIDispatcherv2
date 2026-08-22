@@ -167,22 +167,24 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
 
       // Also sync from server endpoint
       const res = await fetch('/api/admin/smtp');
-      const data = await res.json();
-      if (data.success && data.settings) {
-        const s = data.settings;
-        if (!cloudSmtp) {
-          setSmtpHost(s.host || 'smtp.gmail.com');
-          setSmtpPort(s.port || 587);
-          setSmtpSecure(s.secure || false);
-          setSmtpRequireTls(s.requireTls ?? true);
-          setSmtpUser(s.user || 'solarastra.in@gmail.com');
-          setSmtpFromEmail(s.fromEmail || 'solarastra.in@gmail.com');
-          setSmtpFromName(s.fromName || 'WhyOr Dispatch AI Enterprise');
-          setSmtpReplyTo(s.replyTo || 'solarastra.in@gmail.com');
+      if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
+        const data = await res.json();
+        if (data.success && data.settings) {
+          const s = data.settings;
+          if (!cloudSmtp) {
+            setSmtpHost(s.host || 'smtp.gmail.com');
+            setSmtpPort(s.port || 587);
+            setSmtpSecure(s.secure || false);
+            setSmtpRequireTls(s.requireTls ?? true);
+            setSmtpUser(s.user || 'solarastra.in@gmail.com');
+            setSmtpFromEmail(s.fromEmail || 'solarastra.in@gmail.com');
+            setSmtpFromName(s.fromName || 'WhyOr Dispatch AI Enterprise');
+            setSmtpReplyTo(s.replyTo || 'solarastra.in@gmail.com');
+          }
+          setIsVerified(s.isVerified);
+          setLastVerifiedAt(s.lastVerifiedAt);
+          setHasStoredPassword(s.hasPassword);
         }
-        setIsVerified(s.isVerified);
-        setLastVerifiedAt(s.lastVerifiedAt);
-        setHasStoredPassword(s.hasPassword);
       }
     } catch (err) {
       console.warn('Using local fallback for SMTP settings');
@@ -192,13 +194,15 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
   const fetchEmailLogs = async () => {
     try {
       const res = await fetch('/api/admin/smtp/logs');
-      const data = await res.json();
-      if (data.success && Array.isArray(data.logs)) {
-        setEmailLogs(data.logs);
-      } else {
-        const cloudLogs = await loadEmailLogsFromFirestore(25);
-        if (cloudLogs.length > 0) setEmailLogs(cloudLogs);
+      if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.logs)) {
+          setEmailLogs(data.logs);
+          return;
+        }
       }
+      const cloudLogs = await loadEmailLogsFromFirestore(25);
+      if (cloudLogs.length > 0) setEmailLogs(cloudLogs);
     } catch (err) {
       const cloudLogs = await loadEmailLogsFromFirestore(25);
       if (cloudLogs.length > 0) setEmailLogs(cloudLogs);
@@ -337,13 +341,40 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
     }
   };
 
+  // Safe JSON API fetch utility to prevent JSON parse crashes on HTML error responses
+  const safeFetchJson = async (url: string, options?: RequestInit) => {
+    const res = await fetch(url, options);
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      try {
+        const data = await res.json();
+        return { ok: res.ok, status: res.status, data };
+      } catch (err: any) {
+        // Fall through to text
+      }
+    }
+    const rawText = await res.text().catch(() => '');
+    const cleanSnippet = rawText.replace(/<[^>]*>?/gm, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
+    return {
+      ok: false,
+      status: res.status,
+      data: {
+        success: false,
+        error: cleanSnippet || `HTTP ${res.status} ${res.statusText || 'Server Error'}`,
+        recommendation: res.status === 504 || res.status === 502
+          ? 'The mail server took too long to respond. Try switching to Port 465 (SSL) or verify your App Password.'
+          : 'Please check your SMTP host, port, and authentication credentials.',
+      },
+    };
+  };
+
   // Verify Handshake Handler
   const handleVerifySmtp = async () => {
     setIsVerifying(true);
     setStatusMessage(null);
 
     try {
-      const res = await fetch('/api/admin/smtp/verify', {
+      const { ok, data } = await safeFetchJson('/api/admin/smtp/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -356,8 +387,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
         }),
       });
 
-      const data = await res.json();
-      if (data.success) {
+      if (ok && data?.success) {
         setIsVerified(true);
         setLastVerifiedAt(data.verifiedAt || new Date().toISOString());
         setStatusMessage({
@@ -381,7 +411,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
         setIsVerified(false);
         setStatusMessage({
           type: 'error',
-          text: `Verification Failed: ${data.error || 'Connection refused or credentials rejected'}. ${data.recommendation || ''}`,
+          text: `Verification Failed: ${data?.error || 'Connection refused or credentials rejected'}. ${data?.recommendation || ''}`,
         });
       }
     } catch (err: any) {
@@ -405,6 +435,12 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
       return;
     }
 
+    if (!smtpUser.trim()) {
+      setStatusMessage({ type: 'error', text: 'Please specify the SMTP Username (e.g. your Gmail address).' });
+      setIsSendingTrial(false);
+      return;
+    }
+
     try {
       const payload = {
         to: superAdminEmail,
@@ -423,14 +459,13 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
         replyTo: smtpReplyTo.trim() || superAdminEmail,
       };
 
-      const res = await fetch('/api/admin/smtp/send-test', {
+      const { ok, data } = await safeFetchJson('/api/admin/smtp/send-test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
 
-      const data = await res.json();
-      if (data.success) {
+      if (ok && data?.success) {
         setIsVerified(true);
         const verifiedTime = new Date().toISOString();
         setLastVerifiedAt(verifiedTime);
@@ -469,14 +504,16 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
         fetchEmailLogs();
       } else {
         setIsVerified(false);
+        const errMsg = data?.error || 'Connection failed or credentials rejected';
+        const recMsg = data?.recommendation || 'Please verify host, port, username, and password/App Password.';
         setTrialValidationResult({
           success: false,
           recipient: superAdminEmail,
-          error: data.error || 'Connection failed or credentials rejected',
+          error: `${errMsg}${recMsg ? ` — ${recMsg}` : ''}`,
         });
         setStatusMessage({
           type: 'error',
-          text: `Trial Email Failed: ${data.error || 'Could not dispatch test email'}. ${data.recommendation || 'Please verify host, port, username, and password/App Password.'}`,
+          text: `Trial Email Failed: ${errMsg}. ${recMsg}`,
         });
       }
     } catch (err: any) {
@@ -498,7 +535,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
     setStatusMessage(null);
 
     try {
-      const res = await fetch('/api/admin/smtp/send-test', {
+      const { ok, data } = await safeFetchJson('/api/admin/smtp/send-test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -519,8 +556,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
         }),
       });
 
-      const data = await res.json();
-      if (data.success) {
+      if (ok && data?.success) {
         setStatusMessage({
           type: 'success',
           text: `Email dispatched to ${testRecipient}! Message-ID: ${data.messageId} (${data.durationMs}ms)`,
@@ -550,11 +586,11 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
       } else {
         setStatusMessage({
           type: 'error',
-          text: `Failed to send email: ${data.error}. ${data.recommendation || ''}`,
+          text: `Failed to send email: ${data?.error || 'Unknown error'}. ${data?.recommendation || ''}`,
         });
       }
     } catch (err: any) {
-      setStatusMessage({ type: 'error', text: `Send Error: ${err.message}` });
+      setStatusMessage({ type: 'error', text: `Failed to send test email: ${err.message}` });
     } finally {
       setIsSendingTest(false);
     }
@@ -1185,27 +1221,48 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                 </div>
 
                 {trialValidationResult && (
-                  <div className={`p-3 rounded-lg border text-xs flex items-start gap-2.5 ${
+                  <div className={`p-3.5 rounded-xl border text-xs flex items-start gap-3 ${
                     trialValidationResult.success
                       ? 'bg-emerald-950/40 border-emerald-500/30 text-emerald-200'
-                      : 'bg-rose-950/40 border-rose-500/30 text-rose-200'
+                      : 'bg-rose-950/50 border-rose-500/40 text-rose-200'
                   }`}>
                     {trialValidationResult.success ? (
                       <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
                     ) : (
                       <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
                     )}
-                    <div className="space-y-0.5 min-w-0">
-                      <div className="font-semibold">
-                        {trialValidationResult.success
-                          ? `Trial Email Delivered to ${trialValidationResult.recipient} (${trialValidationResult.durationMs}ms)`
-                          : `Trial Email Delivery Failed to ${trialValidationResult.recipient}`}
+                    <div className="space-y-1 min-w-0 flex-1">
+                      <div className="font-semibold text-xs flex items-center justify-between gap-2">
+                        <span>
+                          {trialValidationResult.success
+                            ? `Trial Email Delivered to ${trialValidationResult.recipient} (${trialValidationResult.durationMs}ms)`
+                            : `Trial Email Delivery Failed to ${trialValidationResult.recipient}`}
+                        </span>
+                        {trialValidationResult.success && (
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono">
+                            Ready to Save
+                          </span>
+                        )}
                       </div>
-                      <div className="text-[11px] font-mono text-slate-300 opacity-90 truncate">
+                      <div className="text-[11px] text-slate-300 leading-relaxed break-words">
                         {trialValidationResult.success
-                          ? `Message-ID: ${trialValidationResult.messageId} • Host verified: ${smtpHost}:${smtpPort}`
+                          ? `Message-ID: ${trialValidationResult.messageId} • Host socket handshake confirmed on ${smtpHost}:${smtpPort}`
                           : trialValidationResult.error}
                       </div>
+                      {!trialValidationResult.success && trialValidationResult.error?.includes('BadCredentials') && (
+                        <div className="text-[11px] bg-rose-900/30 border border-rose-500/20 rounded-lg p-2 mt-2 text-rose-300">
+                          <strong>💡 Gmail Tip:</strong> Use a 16-character App Password from{' '}
+                          <a
+                            href="https://myaccount.google.com/apppasswords"
+                            target="_blank"
+                            rel="noreferrer"
+                            className="underline text-indigo-300 hover:text-indigo-200 font-semibold"
+                          >
+                            myaccount.google.com/apppasswords
+                          </a>{' '}
+                          instead of your account password.
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
