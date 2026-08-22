@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   ShieldCheck, 
   Mail, 
@@ -32,7 +32,14 @@ import {
   UserPlus,
   Layers,
   Palette,
-  FileCode2
+  FileCode2,
+  ChevronDown,
+  Trash2,
+  HelpCircle,
+  Info,
+  SlidersHorizontal,
+  Terminal,
+  RotateCcw
 } from 'lucide-react';
 import { 
   auth, 
@@ -75,13 +82,25 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
   const [activeTab, setActiveTab] = useState<
     'analytics' | 'customers' | 'onboarding' | 'admin_privileges' | 'ai_keys' | 'smtp' | 'templates' | 'platform_config' | 'subscriptions' | 'inquiries' | 'auth' | 'firestore' | 'context_policy' | 'self_host' | 'audit'
   >('analytics');
+  const [openSectionMenu, setOpenSectionMenu] = useState<string | null>(null);
+  const sectionNavRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (sectionNavRef.current && !sectionNavRef.current.contains(e.target as Node)) {
+        setOpenSectionMenu(null);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, []);
   
   // Firebase Auth State
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState<boolean>(false);
   const [authNotice, setAuthNotice] = useState<string | null>(null);
 
-  // SMTP Settings State
+  // SMTP Settings State (Dynamic in Admin Console - 0% Env Var Dependency)
   const [smtpHost, setSmtpHost] = useState<string>('smtp.gmail.com');
   const [smtpPort, setSmtpPort] = useState<number>(587);
   const [smtpSecure, setSmtpSecure] = useState<boolean>(false);
@@ -91,6 +110,15 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
   const [smtpFromEmail, setSmtpFromEmail] = useState<string>('solarastra.in@gmail.com');
   const [smtpFromName, setSmtpFromName] = useState<string>('WhyOr Dispatch AI Enterprise');
   const [smtpReplyTo, setSmtpReplyTo] = useState<string>('solarastra.in@gmail.com');
+  const [smtpPool, setSmtpPool] = useState<boolean>(true);
+  const [smtpMaxConnections, setSmtpMaxConnections] = useState<number>(5);
+  const [smtpRateLimit, setSmtpRateLimit] = useState<number>(10);
+  const [smtpConnectionTimeout, setSmtpConnectionTimeout] = useState<number>(6000);
+  const [smtpGreetingTimeout, setSmtpGreetingTimeout] = useState<number>(5000);
+  const [smtpSocketTimeout, setSmtpSocketTimeout] = useState<number>(6000);
+  const [smtpAuthMethod, setSmtpAuthMethod] = useState<string>('LOGIN');
+  const [smtpPreset, setSmtpPreset] = useState<string>('gmail');
+  const [showAdvancedSmtp, setShowAdvancedSmtp] = useState<boolean>(false);
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [hasStoredPassword, setHasStoredPassword] = useState<boolean>(false);
   const [isVerified, setIsVerified] = useState<boolean>(false);
@@ -107,6 +135,8 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
   const [isVerifying, setIsVerifying] = useState<boolean>(false);
   const [isSendingTest, setIsSendingTest] = useState<boolean>(false);
   const [isSendingTrial, setIsSendingTrial] = useState<boolean>(false);
+  const [isClearingLogs, setIsClearingLogs] = useState<boolean>(false);
+  const [emailLogFilter, setEmailLogFilter] = useState<'all' | 'sent' | 'failed'>('all');
   const [trialValidationResult, setTrialValidationResult] = useState<{
     success: boolean;
     recipient: string;
@@ -118,14 +148,6 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [emailLogs, setEmailLogs] = useState<any[]>([]);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
-  const [firestoreStats, setFirestoreStats] = useState({
-    credentials: 7,
-    smtpConfig: 1,
-    emailLogs: 12,
-    dispatchLedger: 84,
-    contextSessions: 18,
-    status: 'Connected & Live'
-  });
 
   // Listen to Firebase Auth state
   useEffect(() => {
@@ -147,7 +169,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
 
   const fetchSmtpSettings = async () => {
     try {
-      // First try Firestore
+      // First try Firestore Cloud Database
       const cloudSmtp = await loadSmtpSettingsFromFirestore();
       if (cloudSmtp) {
         setSmtpHost(cloudSmtp.host || 'smtp.gmail.com');
@@ -158,6 +180,14 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
         setSmtpFromEmail(cloudSmtp.fromEmail || 'solarastra.in@gmail.com');
         setSmtpFromName(cloudSmtp.fromName || 'WhyOr Dispatch AI Enterprise');
         setSmtpReplyTo(cloudSmtp.replyTo || 'solarastra.in@gmail.com');
+        setSmtpPool(cloudSmtp.pool ?? true);
+        setSmtpMaxConnections(cloudSmtp.maxConnections ?? 5);
+        setSmtpRateLimit(cloudSmtp.rateLimit ?? 10);
+        setSmtpConnectionTimeout(cloudSmtp.connectionTimeout ?? 6000);
+        setSmtpGreetingTimeout(cloudSmtp.greetingTimeout ?? 5000);
+        setSmtpSocketTimeout(cloudSmtp.socketTimeout ?? 6000);
+        setSmtpAuthMethod(cloudSmtp.authMethod || 'LOGIN');
+        setSmtpPreset(cloudSmtp.preset || 'gmail');
         setIsVerified(!!cloudSmtp.isVerified);
         setLastVerifiedAt(cloudSmtp.lastVerifiedAt || null);
         if (cloudSmtp.passMasked) {
@@ -165,7 +195,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
         }
       }
 
-      // Also sync from server endpoint
+      // Also sync from server runtime endpoint
       const res = await fetch('/api/admin/smtp');
       if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
         const data = await res.json();
@@ -180,6 +210,14 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
             setSmtpFromEmail(s.fromEmail || 'solarastra.in@gmail.com');
             setSmtpFromName(s.fromName || 'WhyOr Dispatch AI Enterprise');
             setSmtpReplyTo(s.replyTo || 'solarastra.in@gmail.com');
+            setSmtpPool(s.pool ?? true);
+            setSmtpMaxConnections(s.maxConnections ?? 5);
+            setSmtpRateLimit(s.rateLimit ?? 10);
+            setSmtpConnectionTimeout(s.connectionTimeout ?? 6000);
+            setSmtpGreetingTimeout(s.greetingTimeout ?? 5000);
+            setSmtpSocketTimeout(s.socketTimeout ?? 6000);
+            setSmtpAuthMethod(s.authMethod || 'LOGIN');
+            setSmtpPreset(s.preset || 'gmail');
           }
           setIsVerified(s.isVerified);
           setLastVerifiedAt(s.lastVerifiedAt);
@@ -248,37 +286,71 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
     setAuthNotice('Signed out from Google Auth session.');
   };
 
-  // Quick Preset Handlers
-  const applyPreset = (preset: 'gmail' | 'sendgrid' | 'mailgun' | 'ses') => {
+  // Quick Provider Preset Handlers
+  const applyPreset = (preset: 'gmail' | 'office365' | 'sendgrid' | 'mailgun' | 'ses' | 'custom') => {
+    setSmtpPreset(preset);
     if (preset === 'gmail') {
       setSmtpHost('smtp.gmail.com');
       setSmtpPort(587);
       setSmtpSecure(false);
       setSmtpRequireTls(true);
+      setSmtpAuthMethod('LOGIN');
       setSmtpFromEmail(currentUser?.email || 'solarastra.in@gmail.com');
       setSmtpUser(currentUser?.email || 'solarastra.in@gmail.com');
+      setSmtpReplyTo(currentUser?.email || 'solarastra.in@gmail.com');
+      setStatusMessage({ type: 'info', text: 'Applied Google / Gmail preset (smtp.gmail.com:587). Please enter your 16-character Google App Password.' });
+    } else if (preset === 'office365') {
+      setSmtpHost('smtp.office365.com');
+      setSmtpPort(587);
+      setSmtpSecure(false);
+      setSmtpRequireTls(true);
+      setSmtpAuthMethod('LOGIN');
+      setSmtpFromEmail('admin@whyor.com');
+      setStatusMessage({ type: 'info', text: 'Applied Microsoft 365 / Outlook preset (smtp.office365.com:587).' });
     } else if (preset === 'sendgrid') {
       setSmtpHost('smtp.sendgrid.net');
       setSmtpPort(587);
       setSmtpSecure(false);
       setSmtpRequireTls(true);
+      setSmtpAuthMethod('PLAIN');
       setSmtpUser('apikey');
       setSmtpFromEmail('alerts@whyor.in');
+      setStatusMessage({ type: 'info', text: 'Applied SendGrid preset (smtp.sendgrid.net:587 with username "apikey").' });
     } else if (preset === 'mailgun') {
       setSmtpHost('smtp.mailgun.org');
       setSmtpPort(587);
       setSmtpSecure(false);
       setSmtpRequireTls(true);
-      setSmtpUser('postmaster@sandbox.mailgun.org');
-      setSmtpFromEmail('postmaster@sandbox.mailgun.org');
+      setSmtpAuthMethod('LOGIN');
+      setSmtpUser('postmaster@whyor.mailgun.org');
+      setSmtpFromEmail('alerts@whyor.mailgun.org');
+      setStatusMessage({ type: 'info', text: 'Applied Mailgun preset (smtp.mailgun.org:587).' });
     } else if (preset === 'ses') {
       setSmtpHost('email-smtp.us-east-1.amazonaws.com');
       setSmtpPort(587);
       setSmtpSecure(false);
       setSmtpRequireTls(true);
+      setSmtpAuthMethod('LOGIN');
       setSmtpFromEmail('system@whyor.in');
+      setStatusMessage({ type: 'info', text: 'Applied Amazon SES preset (email-smtp.us-east-1.amazonaws.com:587).' });
+    } else {
+      setStatusMessage({ type: 'info', text: 'Switched to Custom SMTP Server mode. Specify custom host, port, and security protocols.' });
     }
-    setStatusMessage({ type: 'info', text: `Applied ${preset.toUpperCase()} server preset. Enter your credentials and verify connection.` });
+  };
+
+  // Clear Email Dispatch Logs Handler
+  const handleClearEmailLogs = async () => {
+    setIsClearingLogs(true);
+    try {
+      await fetch('/api/admin/smtp/logs', { method: 'DELETE' });
+      setEmailLogs([]);
+      setStatusMessage({ type: 'success', text: 'Outbound dispatch logs successfully purged.' });
+    } catch (err: any) {
+      setEmailLogs([]);
+      setStatusMessage({ type: 'info', text: 'Logs cleared locally.' });
+    } finally {
+      setIsClearingLogs(false);
+    }
   };
 
   // Save SMTP Settings Handler
@@ -296,12 +368,21 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
       fromEmail: smtpFromEmail.trim(),
       fromName: smtpFromName.trim(),
       replyTo: smtpReplyTo.trim(),
+      pool: smtpPool,
+      maxConnections: Number(smtpMaxConnections),
+      rateLimit: Number(smtpRateLimit),
+      connectionTimeout: Number(smtpConnectionTimeout),
+      socketTimeout: Number(smtpSocketTimeout),
+      greetingTimeout: Number(smtpGreetingTimeout),
+      authMethod: smtpAuthMethod,
+      preset: smtpPreset,
       isVerified,
       lastVerifiedAt: lastVerifiedAt || undefined,
+      updatedBy: currentUser?.email || 'SuperAdmin',
     };
 
     try {
-      // 1. Save to Server
+      // 1. Save to Server Runtime Vault
       const res = await fetch('/api/admin/smtp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -320,8 +401,17 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
         fromEmail: payload.fromEmail,
         fromName: payload.fromName,
         replyTo: payload.replyTo,
+        pool: payload.pool,
+        maxConnections: payload.maxConnections,
+        rateLimit: payload.rateLimit,
+        connectionTimeout: payload.connectionTimeout,
+        socketTimeout: payload.socketTimeout,
+        greetingTimeout: payload.greetingTimeout,
+        authMethod: payload.authMethod,
+        preset: payload.preset,
         isVerified,
         lastVerifiedAt: lastVerifiedAt || undefined,
+        updatedBy: payload.updatedBy,
       });
 
       // 3. Audit log
@@ -329,11 +419,11 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
         'Update SMTP Config',
         'smtp',
         currentUser?.email || smtpUser || 'Admin',
-        `Updated SMTP host to ${payload.host}:${payload.port} for sender ${payload.fromEmail}`
+        `Updated SMTP host to ${payload.host}:${payload.port} (Preset: ${payload.preset}) for sender ${payload.fromEmail}`
       );
 
       setHasStoredPassword(true);
-      setStatusMessage({ type: 'success', text: 'SMTP server settings saved to Firestore and Server Vault.' });
+      setStatusMessage({ type: 'success', text: 'SMTP server configuration saved to Firestore Cloud DB and Server Runtime Vault.' });
     } catch (err: any) {
       setStatusMessage({ type: 'error', text: `Failed to save SMTP settings: ${err.message}` });
     } finally {
@@ -383,7 +473,9 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
           secure: smtpSecure,
           requireTls: smtpRequireTls,
           user: smtpUser.trim(),
-          pass: smtpPass.trim(),
+          pass: smtpPass.trim() || (hasStoredPassword ? '••••••••••••••••' : ''),
+          connectionTimeout: smtpConnectionTimeout,
+          greetingTimeout: smtpGreetingTimeout,
         }),
       });
 
@@ -457,6 +549,10 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
         fromEmail: smtpFromEmail.trim() || superAdminEmail,
         fromName: smtpFromName.trim() || 'WhyOr Dispatch AI Enterprise',
         replyTo: smtpReplyTo.trim() || superAdminEmail,
+        pool: smtpPool,
+        maxConnections: smtpMaxConnections,
+        connectionTimeout: smtpConnectionTimeout,
+        greetingTimeout: smtpGreetingTimeout,
       };
 
       const { ok, data } = await safeFetchJson('/api/admin/smtp/send-test', {
@@ -553,6 +649,10 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
           fromEmail: smtpFromEmail.trim(),
           fromName: smtpFromName.trim(),
           replyTo: smtpReplyTo.trim(),
+          pool: smtpPool,
+          maxConnections: smtpMaxConnections,
+          connectionTimeout: smtpConnectionTimeout,
+          greetingTimeout: smtpGreetingTimeout,
         }),
       });
 
@@ -590,7 +690,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
         });
       }
     } catch (err: any) {
-      setStatusMessage({ type: 'error', text: `Failed to send test email: ${err.message}` });
+      setStatusMessage({ type: 'error', text: `Error sending test email: ${err.message}` });
     } finally {
       setIsSendingTest(false);
     }
@@ -695,208 +795,273 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
         </div>
       </div>
 
-      {/* Tabs Navigation */}
-      <div className="flex items-center gap-2 border-b border-white/10 pb-2 overflow-x-auto">
-        <button
-          onClick={() => setActiveTab('analytics')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium transition-all cursor-pointer whitespace-nowrap ${
-            activeTab === 'analytics'
-              ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-slate-950 font-bold shadow-md shadow-orange-500/20'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
-          }`}
-        >
-          <BarChart3 className="w-4 h-4" />
-          <span>Dashboard Analytics</span>
-        </button>
+      {/* Categorized Dropdown Navigation Header (Eliminates overcrowding and horizontal screen overflow) */}
+      <div className="space-y-2.5 pb-2" ref={sectionNavRef}>
+        <div className="flex flex-wrap items-center justify-between gap-2.5">
+          
+          {/* 4 Section Dropdowns */}
+          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+            {[
+              {
+                id: 'org',
+                label: 'Organizations & RBAC',
+                shortLabel: 'Organizations',
+                icon: Building2,
+                color: 'text-purple-400',
+                activeBorder: 'border-purple-400/40 bg-purple-500/15 text-purple-200',
+                items: [
+                  {
+                    id: 'onboarding' as const,
+                    label: 'Onboard Companies & Teams',
+                    description: 'Multi-seat setup, BYOK tier allocations & team invites',
+                    icon: Building2,
+                    color: 'text-purple-400',
+                    badge: 'Wizard',
+                  },
+                  {
+                    id: 'customers' as const,
+                    label: 'Onboarded Customers & Seats',
+                    description: 'Tenant registry, monthly token quotas & seat governance',
+                    icon: Users,
+                    color: 'text-indigo-400',
+                    badge: 'Tenant Hub',
+                  },
+                  {
+                    id: 'admin_privileges' as const,
+                    label: 'Admins & Privileges Matrix',
+                    description: 'SuperAdmin RBAC permissions, role grants & audit controls',
+                    icon: ShieldCheck,
+                    color: 'text-pink-400',
+                    badge: 'RBAC',
+                  },
+                  {
+                    id: 'auth' as const,
+                    label: 'Google Auth & Access Control',
+                    description: 'Identity providers, OAuth token lifetimes & tenant scopes',
+                    icon: UserCheck,
+                    color: 'text-emerald-400',
+                  },
+                ],
+              },
+              {
+                id: 'ai',
+                label: 'AI Engines & Routing',
+                shortLabel: 'AI & Models',
+                icon: KeyRound,
+                color: 'text-amber-400',
+                activeBorder: 'border-amber-400/40 bg-amber-500/15 text-amber-200',
+                items: [
+                  {
+                    id: 'ai_keys' as const,
+                    label: 'AI Engine Keys & Budgets (BYOK)',
+                    description: 'OpenAI, Anthropic, Gemini, DeepSeek & Ollama BYOK keys',
+                    icon: KeyRound,
+                    color: 'text-amber-400',
+                    badge: 'BYOK',
+                  },
+                  {
+                    id: 'context_policy' as const,
+                    label: 'Context Storage Policy & Routing',
+                    description: 'Semantic cache thresholds, deduplication & AST fallbacks',
+                    icon: Sliders,
+                    color: 'text-cyan-400',
+                  },
+                  {
+                    id: 'self_host' as const,
+                    label: 'Self-Host Viability (GPU ROI)',
+                    description: 'H100/A100 server ROI estimator & private local inference',
+                    icon: Cpu,
+                    color: 'text-orange-400',
+                    badge: 'ROI Analytics',
+                  },
+                  {
+                    id: 'firestore' as const,
+                    label: 'Firestore Storage Health',
+                    description: 'Active database collections, latency metrics & rules health',
+                    icon: Database,
+                    color: 'text-blue-400',
+                  },
+                ],
+              },
+              {
+                id: 'comms',
+                label: 'Communications & Mail',
+                shortLabel: 'Mail & Alerts',
+                icon: Mail,
+                color: 'text-indigo-400',
+                activeBorder: 'border-indigo-400/40 bg-indigo-500/15 text-indigo-200',
+                items: [
+                  {
+                    id: 'smtp' as const,
+                    label: 'SMTP Email Settings',
+                    description: 'Configure mail relays, Google App passwords & SSL/TLS handshakes',
+                    icon: Mail,
+                    color: 'text-indigo-400',
+                    liveDot: isVerified,
+                  },
+                  {
+                    id: 'templates' as const,
+                    label: 'Email & Alert Templates',
+                    description: 'Customize HTML/Text layouts, brand variables & live preview',
+                    icon: FileCode2,
+                    color: 'text-purple-400',
+                    badge: 'HTML/Text',
+                  },
+                  {
+                    id: 'inquiries' as const,
+                    label: 'Contact Us Inquiries',
+                    description: 'Inbound customer contact submissions & enterprise leads',
+                    icon: MailCheck,
+                    color: 'text-emerald-400',
+                  },
+                ],
+              },
+              {
+                id: 'ops',
+                label: 'Analytics & Operations',
+                shortLabel: 'Analytics & Ops',
+                icon: BarChart3,
+                color: 'text-emerald-400',
+                activeBorder: 'border-emerald-400/40 bg-emerald-500/15 text-emerald-200',
+                items: [
+                  {
+                    id: 'analytics' as const,
+                    label: 'Dashboard Analytics & Telemetry',
+                    description: 'Real-time throughput, token savings & cost arbitrage',
+                    icon: BarChart3,
+                    color: 'text-emerald-400',
+                  },
+                  {
+                    id: 'subscriptions' as const,
+                    label: 'Subscriptions & 7-Day Trials',
+                    description: 'Manage active customer trial tiers, durations & limits',
+                    icon: Clock,
+                    color: 'text-cyan-400',
+                    badge: '7-Day Trials',
+                  },
+                  {
+                    id: 'audit' as const,
+                    label: 'Security Audit & Email Trail',
+                    description: 'Immutable system audit logs & outbound mail dispatch events',
+                    icon: Activity,
+                    color: 'text-rose-400',
+                  },
+                  {
+                    id: 'platform_config' as const,
+                    label: 'Portal Global Config',
+                    description: 'Platform policies, model rate multipliers & enterprise defaults',
+                    icon: Sliders,
+                    color: 'text-indigo-400',
+                    badge: 'Policies',
+                  },
+                ],
+              },
+            ].map((section) => {
+              const SectionIcon = section.icon;
+              const isSectionActive = section.items.some((it) => it.id === activeTab);
+              const isOpen = openSectionMenu === section.id;
 
-        <button
-          onClick={() => setActiveTab('customers')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium transition-all cursor-pointer whitespace-nowrap ${
-            activeTab === 'customers'
-              ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-bold shadow-md shadow-indigo-600/30'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
-          }`}
-        >
-          <Users className="w-4 h-4 text-indigo-400" />
-          <span>Onboarded Customers</span>
-          <span className="px-1.5 py-0.2 rounded-full text-[9px] font-mono bg-indigo-500/20 text-indigo-300 border border-indigo-400/30">
-            Tenant Hub
-          </span>
-        </button>
+              return (
+                <div key={section.id} className="relative">
+                  <button
+                    id={`admin-section-${section.id}`}
+                    onClick={() => setOpenSectionMenu(isOpen ? null : section.id)}
+                    className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer border ${
+                      isSectionActive
+                        ? section.activeBorder + ' shadow-sm'
+                        : 'bg-white/[0.04] hover:bg-white/[0.08] text-slate-300 border-white/10'
+                    }`}
+                  >
+                    <SectionIcon className={`w-3.5 h-3.5 ${section.color}`} />
+                    <span className="hidden sm:inline">{section.label}</span>
+                    <span className="sm:hidden">{section.shortLabel}</span>
+                    <ChevronDown className={`w-3 h-3 transition-transform ${isOpen ? 'rotate-180 text-white' : 'text-slate-400'}`} />
+                  </button>
 
-        <button
-          onClick={() => setActiveTab('onboarding')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium transition-all cursor-pointer whitespace-nowrap ${
-            activeTab === 'onboarding'
-              ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-bold shadow-md shadow-purple-600/30'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
-          }`}
-        >
-          <Building2 className="w-4 h-4 text-purple-400" />
-          <span>Onboard Companies & Teams</span>
-          <span className="px-1.5 py-0.2 rounded-full text-[9px] font-mono bg-purple-500/20 text-purple-300 border border-purple-400/30 uppercase">
-            Wizard
-          </span>
-        </button>
+                  {/* Section Dropdown Menu */}
+                  {isOpen && (
+                    <div className="absolute left-0 mt-2 w-76 sm:w-80 rounded-2xl bg-slate-900/95 backdrop-blur-2xl border border-white/15 shadow-2xl p-2 z-50 animate-in fade-in zoom-in-95 duration-100 space-y-1">
+                      <div className="px-3 py-1.5 border-b border-white/10 mb-1 flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 text-[10px] font-mono uppercase font-bold text-slate-300">
+                          <SectionIcon className={`w-3 h-3 ${section.color}`} />
+                          <span>{section.label}</span>
+                        </div>
+                        <span className="text-[10px] font-mono text-slate-500">
+                          {section.items.length} Modules
+                        </span>
+                      </div>
 
-        <button
-          onClick={() => setActiveTab('admin_privileges')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium transition-all cursor-pointer whitespace-nowrap ${
-            activeTab === 'admin_privileges'
-              ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white font-bold shadow-md shadow-purple-600/30'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
-          }`}
-        >
-          <ShieldCheck className="w-4 h-4 text-pink-400" />
-          <span>Admins & Privileges</span>
-          <span className="px-1.5 py-0.2 rounded-full text-[9px] font-mono bg-pink-500/20 text-pink-300 border border-pink-400/30 uppercase">
-            RBAC
-          </span>
-        </button>
+                      {section.items.map((item) => {
+                        const ItemIcon = item.icon;
+                        const isTabSelected = activeTab === item.id;
+                        return (
+                          <button
+                            key={item.id}
+                            id={`admin-tab-select-${item.id}`}
+                            onClick={() => {
+                              setActiveTab(item.id);
+                              setOpenSectionMenu(null);
+                            }}
+                            className={`w-full flex items-start gap-2.5 p-2 rounded-xl text-left transition-all cursor-pointer ${
+                              isTabSelected
+                                ? 'bg-white/[0.12] border border-orange-400/50 text-white shadow-sm'
+                                : 'hover:bg-white/[0.06] text-slate-300 border border-transparent'
+                            }`}
+                          >
+                            <div className={`p-1.5 rounded-lg bg-white/5 border border-white/10 ${item.color} mt-0.5 shrink-0`}>
+                              <ItemIcon className="w-3.5 h-3.5" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center justify-between gap-1">
+                                <div className="flex items-center gap-1.5 truncate">
+                                  <span className="text-xs font-semibold text-white truncate">{item.label}</span>
+                                  {item.liveDot && (
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0 shadow-[0_0_6px_rgba(52,211,153,0.8)]" />
+                                  )}
+                                </div>
+                                {item.badge && (
+                                  <span className="text-[9px] font-mono uppercase px-1.5 py-0.2 rounded-full bg-orange-500/20 text-orange-300 border border-orange-400/30 shrink-0">
+                                    {item.badge}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[10px] text-slate-400 leading-tight truncate mt-0.5">
+                                {item.description}
+                              </p>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
 
-        <button
-          onClick={() => setActiveTab('ai_keys')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium transition-all cursor-pointer whitespace-nowrap ${
-            activeTab === 'ai_keys'
-              ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 font-bold shadow-md shadow-amber-500/20'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
-          }`}
-        >
-          <KeyRound className="w-4 h-4" />
-          <span>AI Engine Keys & Budgets (BYOK)</span>
-        </button>
+          {/* Active Tab Breadcrumb Badge */}
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/[0.04] border border-white/10 backdrop-blur-md">
+            <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wider font-semibold">Active:</span>
+            <span className="text-xs font-bold text-amber-300 font-mono flex items-center gap-1.5">
+              {activeTab === 'analytics' && '📈 Analytics'}
+              {activeTab === 'customers' && '👥 Customers'}
+              {activeTab === 'onboarding' && '🏢 Onboarding'}
+              {activeTab === 'admin_privileges' && '🛡️ Admins & RBAC'}
+              {activeTab === 'ai_keys' && '🔑 BYOK Keys'}
+              {activeTab === 'smtp' && '✉️ SMTP Settings'}
+              {activeTab === 'templates' && '📝 Email Templates'}
+              {activeTab === 'platform_config' && '⚙️ Portal Config'}
+              {activeTab === 'subscriptions' && '⏱️ Trials & Subs'}
+              {activeTab === 'inquiries' && '📬 Inquiries'}
+              {activeTab === 'auth' && '👤 Auth & Access'}
+              {activeTab === 'firestore' && '🗄️ Firestore Health'}
+              {activeTab === 'context_policy' && '⚡ Context Routing'}
+              {activeTab === 'self_host' && '🖥️ Self-Host ROI'}
+              {activeTab === 'audit' && '📜 Audit Trail'}
+            </span>
+          </div>
 
-        <button
-          onClick={() => setActiveTab('smtp')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium transition-all cursor-pointer whitespace-nowrap ${
-            activeTab === 'smtp'
-              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
-          }`}
-        >
-          <Mail className="w-4 h-4" />
-          <span>SMTP Email Settings</span>
-          {isVerified && (
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-          )}
-        </button>
-
-        <button
-          onClick={() => setActiveTab('templates')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium transition-all cursor-pointer whitespace-nowrap ${
-            activeTab === 'templates'
-              ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-md shadow-indigo-600/30'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
-          }`}
-        >
-          <FileCode2 className="w-4 h-4 text-indigo-400" />
-          <span>Email & Alert Templates</span>
-          <span className="px-1.5 py-0.2 rounded-full text-[9px] font-mono bg-indigo-500/20 text-indigo-300 border border-indigo-400/30">
-            HTML/Text
-          </span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('platform_config')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium transition-all cursor-pointer whitespace-nowrap ${
-            activeTab === 'platform_config'
-              ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-bold shadow-md shadow-indigo-600/30'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
-          }`}
-        >
-          <Sliders className="w-4 h-4 text-cyan-400" />
-          <span>Portal Global Config</span>
-          <span className="px-1.5 py-0.2 rounded-full text-[9px] font-mono bg-cyan-500/20 text-cyan-300 border border-cyan-400/30 uppercase">
-            Policies
-          </span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('subscriptions')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium transition-all cursor-pointer whitespace-nowrap ${
-            activeTab === 'subscriptions'
-              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
-          }`}
-        >
-          <Clock className="w-4 h-4" />
-          <span>Subscriptions & 7-Day Trials</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('inquiries')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium transition-all cursor-pointer whitespace-nowrap ${
-            activeTab === 'inquiries'
-              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
-          }`}
-        >
-          <Mail className="w-4 h-4" />
-          <span>Contact Us Inquiries</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('auth')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium transition-all cursor-pointer whitespace-nowrap ${
-            activeTab === 'auth'
-              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
-          }`}
-        >
-          <UserCheck className="w-4 h-4" />
-          <span>Google Auth & Access Control</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('firestore')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium transition-all cursor-pointer whitespace-nowrap ${
-            activeTab === 'firestore'
-              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
-          }`}
-        >
-          <Database className="w-4 h-4" />
-          <span>Firestore Storage Health</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('context_policy')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium transition-all cursor-pointer whitespace-nowrap ${
-            activeTab === 'context_policy'
-              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
-          }`}
-        >
-          <Sliders className="w-4 h-4" />
-          <span>Context Storage Policy</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('self_host')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium transition-all cursor-pointer whitespace-nowrap ${
-            activeTab === 'self_host'
-              ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 font-bold shadow-md shadow-orange-500/30'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
-          }`}
-        >
-          <Cpu className="w-4 h-4 text-amber-400" />
-          <span>Self-Host Viability (GPU ROI)</span>
-          <span className="px-1.5 py-0.2 rounded-full text-[9px] font-mono bg-amber-500/20 text-amber-300 border border-amber-400/30 uppercase">
-            ROI Analytics
-          </span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('audit')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium transition-all cursor-pointer whitespace-nowrap ${
-            activeTab === 'audit'
-              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
-          }`}
-        >
-          <Activity className="w-4 h-4" />
-          <span>Security Audit Trail</span>
-        </button>
+        </div>
       </div>
 
       {/* Status Notice Banner */}
@@ -929,12 +1094,12 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
 
       {/* ==================== TAB: ANALYTICS DASHBOARD ==================== */}
       {activeTab === 'analytics' && (
-        <AdminAnalyticsDashboard onNavigateTab={setActiveTab} />
+        <AdminAnalyticsDashboard onNavigateTab={(tab: string) => setActiveTab(tab as any)} />
       )}
 
       {/* ==================== TAB: ONBOARDED CUSTOMERS ==================== */}
       {activeTab === 'customers' && (
-        <AdminCustomersPortal onNavigateTab={setActiveTab} />
+        <AdminCustomersPortal onNavigateTab={(tab: string) => setActiveTab(tab as any)} />
       )}
 
       {/* ==================== TAB: ADMINS & PRIVILEGES (RBAC) ==================== */}
@@ -965,505 +1130,755 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
       {/* ==================== TAB 1: SMTP EMAIL SETTINGS ==================== */}
       {activeTab === 'smtp' && (
         <div className="space-y-6">
-          {/* Email Template Quick Switch Banner */}
-          <div className="p-4 rounded-2xl bg-gradient-to-r from-indigo-950/40 via-purple-950/40 to-slate-900/60 border border-indigo-500/20 backdrop-blur-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
-                <FileCode2 className="w-5 h-5" />
+          {/* Architecture & Template Quick Switch Banner */}
+          <div className="p-4 rounded-2xl bg-gradient-to-r from-indigo-950/50 via-purple-950/40 to-slate-900/80 border border-indigo-500/25 backdrop-blur-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div className="flex items-start sm:items-center gap-3.5">
+              <div className="w-11 h-11 rounded-xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 shrink-0">
+                <Database className="w-5 h-5" />
               </div>
-              <div>
-                <h4 className="text-xs font-bold text-white flex items-center gap-2">
-                  <span>Customizable Alert & Notification Templates</span>
-                  <span className="px-1.5 py-0.5 rounded-full text-[9px] font-mono bg-indigo-500/20 text-indigo-300 border border-indigo-400/30">
-                    Live HTML / Plaintext Editor
+              <div className="space-y-0.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h4 className="text-xs font-bold text-white uppercase tracking-wider font-mono">
+                    Dynamic Admin SMTP Configuration
+                  </h4>
+                  <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-400/30">
+                    Zero Environment Variables Required
                   </span>
-                </h4>
-                <p className="text-[11px] text-slate-400">
-                  SuperAdmin can customize HTML bodies, variables, and brand typography for billing alerts, failover notices, and trial validations.
+                  <span className="px-2 py-0.5 rounded-full text-[9px] font-mono bg-purple-500/15 text-purple-300 border border-purple-400/30">
+                    Firestore Cloud DB & Server Vault
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  All SMTP credentials, server hosts, connection pooling, and timeouts are configured dynamically via this Admin Console and synced with Cloud Firestore.
                 </p>
               </div>
             </div>
-            <button
-              onClick={() => setActiveTab('templates')}
-              className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-lg shadow-indigo-600/20 transition-all shrink-0 cursor-pointer"
-            >
-              <Palette className="w-3.5 h-3.5" />
-              <span>Open Template Editor</span>
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setActiveTab('templates')}
+                className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-lg shadow-indigo-600/20 transition-all cursor-pointer"
+              >
+                <Palette className="w-3.5 h-3.5" />
+                <span>Open Template Editor</span>
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            {/* Main SMTP Form */}
+            {/* Main SMTP Configuration Form */}
             <div className="lg:col-span-7 space-y-6">
-              <div className="bg-slate-900/60 border border-white/10 rounded-2xl p-6 backdrop-blur-xl space-y-5">
-              <div className="flex items-center justify-between">
+              <div className="bg-slate-900/70 border border-white/10 rounded-2xl p-6 backdrop-blur-xl space-y-5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-white/5">
+                  <div>
+                    <h3 className="text-base font-bold text-white flex items-center gap-2">
+                      <Mail className="w-4 h-4 text-indigo-400" />
+                      SMTP Mail Server & Socket Settings
+                    </h3>
+                    <p className="text-xs text-slate-400">
+                      Configure outbound mail relay for failover notifications, quota alerts, and user ledger receipts.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {isVerified ? (
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-400/30 text-xs font-mono">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                        Handshake Active
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 text-amber-300 border border-amber-400/30 text-xs font-mono">
+                        <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
+                        Pending Verification
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Provider Presets */}
                 <div>
-                  <h3 className="text-base font-bold text-white flex items-center gap-2">
-                    <Mail className="w-4 h-4 text-indigo-400" />
-                    SMTP Email Server Configuration
-                  </h3>
-                  <p className="text-xs text-slate-400">
-                    Configure outbound email credentials for dispatch alerts, ledger audits, and quota threshold notifications.
-                  </p>
-                </div>
-                {isVerified ? (
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-400/30 text-xs font-mono">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                    Handshake Verified
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 text-amber-300 border border-amber-400/30 text-xs font-mono">
-                    <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
-                    Pending Verification
-                  </span>
-                )}
-              </div>
-
-              {/* Server Presets */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-2">
-                  Quick Provider Presets
-                </label>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => applyPreset('gmail')}
-                    className="p-2.5 rounded-xl bg-slate-800/80 hover:bg-slate-700/80 border border-white/5 hover:border-indigo-500/40 text-xs text-slate-200 text-left transition-all cursor-pointer flex flex-col gap-0.5"
-                  >
-                    <span className="font-semibold text-indigo-300">Google / Gmail</span>
-                    <span className="text-[10px] text-slate-400">smtp.gmail.com:587</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => applyPreset('sendgrid')}
-                    className="p-2.5 rounded-xl bg-slate-800/80 hover:bg-slate-700/80 border border-white/5 hover:border-indigo-500/40 text-xs text-slate-200 text-left transition-all cursor-pointer flex flex-col gap-0.5"
-                  >
-                    <span className="font-semibold text-indigo-300">SendGrid</span>
-                    <span className="text-[10px] text-slate-400">smtp.sendgrid.net</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => applyPreset('mailgun')}
-                    className="p-2.5 rounded-xl bg-slate-800/80 hover:bg-slate-700/80 border border-white/5 hover:border-indigo-500/40 text-xs text-slate-200 text-left transition-all cursor-pointer flex flex-col gap-0.5"
-                  >
-                    <span className="font-semibold text-indigo-300">Mailgun</span>
-                    <span className="text-[10px] text-slate-400">smtp.mailgun.org</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => applyPreset('ses')}
-                    className="p-2.5 rounded-xl bg-slate-800/80 hover:bg-slate-700/80 border border-white/5 hover:border-indigo-500/40 text-xs text-slate-200 text-left transition-all cursor-pointer flex flex-col gap-0.5"
-                  >
-                    <span className="font-semibold text-indigo-300">Amazon SES</span>
-                    <span className="text-[10px] text-slate-400">email-smtp.us-east-1</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Host & Port */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div className="sm:col-span-2">
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    SMTP Host Address
-                  </label>
-                  <input
-                    type="text"
-                    value={smtpHost}
-                    onChange={(e) => setSmtpHost(e.target.value)}
-                    placeholder="e.g. smtp.gmail.com"
-                    className="w-full px-3.5 py-2 rounded-xl bg-slate-950/60 border border-white/10 text-white text-xs font-mono focus:border-indigo-500 focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Port
-                  </label>
-                  <input
-                    type="number"
-                    value={smtpPort}
-                    onChange={(e) => setSmtpPort(Number(e.target.value))}
-                    placeholder="587"
-                    className="w-full px-3.5 py-2 rounded-xl bg-slate-950/60 border border-white/10 text-white text-xs font-mono focus:border-indigo-500 focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              {/* Encryption Options */}
-              <div className="flex flex-wrap items-center gap-6 p-3 bg-slate-950/40 border border-white/5 rounded-xl text-xs">
-                <label className="flex items-center gap-2 cursor-pointer text-slate-300">
-                  <input
-                    type="checkbox"
-                    checked={smtpSecure}
-                    onChange={(e) => setSmtpSecure(e.target.checked)}
-                    className="rounded border-slate-700 text-indigo-600 focus:ring-indigo-500"
-                  />
-                  <span>SSL / TLS Direct (Port 465)</span>
-                </label>
-
-                <label className="flex items-center gap-2 cursor-pointer text-slate-300">
-                  <input
-                    type="checkbox"
-                    checked={smtpRequireTls}
-                    onChange={(e) => setSmtpRequireTls(e.target.checked)}
-                    className="rounded border-slate-700 text-indigo-600 focus:ring-indigo-500"
-                  />
-                  <span>STARTTLS Mandatory (Port 587)</span>
-                </label>
-              </div>
-
-              {/* Auth Credentials */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Username / Account Email
-                  </label>
-                  <input
-                    type="text"
-                    value={smtpUser}
-                    onChange={(e) => setSmtpUser(e.target.value)}
-                    placeholder="e.g. solarastra.in@gmail.com"
-                    className="w-full px-3.5 py-2 rounded-xl bg-slate-950/60 border border-white/10 text-white text-xs font-mono focus:border-indigo-500 focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block text-xs font-medium text-slate-300">
-                      Password / App Password
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                      <SlidersHorizontal className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>One-Click Provider Presets</span>
                     </label>
+                    <span className="text-[10px] text-slate-500 font-mono">Auto-populates optimal ports & ciphers</span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                     <button
                       type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="text-[11px] text-slate-400 hover:text-slate-200 flex items-center gap-1 cursor-pointer"
+                      onClick={() => applyPreset('gmail')}
+                      className={`p-2.5 rounded-xl border text-xs text-left transition-all cursor-pointer flex flex-col gap-0.5 ${
+                        smtpPreset === 'gmail'
+                          ? 'bg-indigo-950/60 border-indigo-500/60 text-white shadow-md shadow-indigo-950/50 ring-1 ring-indigo-500/40'
+                          : 'bg-slate-800/80 hover:bg-slate-700/80 border-white/5 hover:border-indigo-500/40 text-slate-200'
+                      }`}
                     >
-                      {showPassword ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                      <span>{showPassword ? 'Hide' : 'Show'}</span>
+                      <span className="font-semibold text-indigo-300 flex items-center justify-between">
+                        <span>Google / Gmail</span>
+                        {smtpPreset === 'gmail' && <Check className="w-3 h-3 text-indigo-400" />}
+                      </span>
+                      <span className="text-[10px] text-slate-400">smtp.gmail.com:587</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => applyPreset('office365')}
+                      className={`p-2.5 rounded-xl border text-xs text-left transition-all cursor-pointer flex flex-col gap-0.5 ${
+                        smtpPreset === 'office365'
+                          ? 'bg-indigo-950/60 border-indigo-500/60 text-white shadow-md shadow-indigo-950/50 ring-1 ring-indigo-500/40'
+                          : 'bg-slate-800/80 hover:bg-slate-700/80 border-white/5 hover:border-indigo-500/40 text-slate-200'
+                      }`}
+                    >
+                      <span className="font-semibold text-indigo-300 flex items-center justify-between">
+                        <span>Microsoft 365</span>
+                        {smtpPreset === 'office365' && <Check className="w-3 h-3 text-indigo-400" />}
+                      </span>
+                      <span className="text-[10px] text-slate-400">smtp.office365.com:587</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => applyPreset('ses')}
+                      className={`p-2.5 rounded-xl border text-xs text-left transition-all cursor-pointer flex flex-col gap-0.5 ${
+                        smtpPreset === 'ses'
+                          ? 'bg-indigo-950/60 border-indigo-500/60 text-white shadow-md shadow-indigo-950/50 ring-1 ring-indigo-500/40'
+                          : 'bg-slate-800/80 hover:bg-slate-700/80 border-white/5 hover:border-indigo-500/40 text-slate-200'
+                      }`}
+                    >
+                      <span className="font-semibold text-indigo-300 flex items-center justify-between">
+                        <span>Amazon SES</span>
+                        {smtpPreset === 'ses' && <Check className="w-3 h-3 text-indigo-400" />}
+                      </span>
+                      <span className="text-[10px] text-slate-400">email-smtp.us-east-1</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => applyPreset('sendgrid')}
+                      className={`p-2.5 rounded-xl border text-xs text-left transition-all cursor-pointer flex flex-col gap-0.5 ${
+                        smtpPreset === 'sendgrid'
+                          ? 'bg-indigo-950/60 border-indigo-500/60 text-white shadow-md shadow-indigo-950/50 ring-1 ring-indigo-500/40'
+                          : 'bg-slate-800/80 hover:bg-slate-700/80 border-white/5 hover:border-indigo-500/40 text-slate-200'
+                      }`}
+                    >
+                      <span className="font-semibold text-indigo-300 flex items-center justify-between">
+                        <span>SendGrid</span>
+                        {smtpPreset === 'sendgrid' && <Check className="w-3 h-3 text-indigo-400" />}
+                      </span>
+                      <span className="text-[10px] text-slate-400">smtp.sendgrid.net:587</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => applyPreset('mailgun')}
+                      className={`p-2.5 rounded-xl border text-xs text-left transition-all cursor-pointer flex flex-col gap-0.5 ${
+                        smtpPreset === 'mailgun'
+                          ? 'bg-indigo-950/60 border-indigo-500/60 text-white shadow-md shadow-indigo-950/50 ring-1 ring-indigo-500/40'
+                          : 'bg-slate-800/80 hover:bg-slate-700/80 border-white/5 hover:border-indigo-500/40 text-slate-200'
+                      }`}
+                    >
+                      <span className="font-semibold text-indigo-300 flex items-center justify-between">
+                        <span>Mailgun</span>
+                        {smtpPreset === 'mailgun' && <Check className="w-3 h-3 text-indigo-400" />}
+                      </span>
+                      <span className="text-[10px] text-slate-400">smtp.mailgun.org:587</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => applyPreset('custom')}
+                      className={`p-2.5 rounded-xl border text-xs text-left transition-all cursor-pointer flex flex-col gap-0.5 ${
+                        smtpPreset === 'custom'
+                          ? 'bg-indigo-950/60 border-indigo-500/60 text-white shadow-md shadow-indigo-950/50 ring-1 ring-indigo-500/40'
+                          : 'bg-slate-800/80 hover:bg-slate-700/80 border-white/5 hover:border-indigo-500/40 text-slate-200'
+                      }`}
+                    >
+                      <span className="font-semibold text-indigo-300 flex items-center justify-between">
+                        <span>Custom SMTP</span>
+                        {smtpPreset === 'custom' && <Check className="w-3 h-3 text-indigo-400" />}
+                      </span>
+                      <span className="text-[10px] text-slate-400">Private / On-Premise</span>
                     </button>
                   </div>
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    value={smtpPass}
-                    onChange={(e) => setSmtpPass(e.target.value)}
-                    placeholder={hasStoredPassword ? '••••••••••••••••' : 'Enter SMTP password or 16-char App Password'}
-                    className="w-full px-3.5 py-2 rounded-xl bg-slate-950/60 border border-white/10 text-white text-xs font-mono focus:border-indigo-500 focus:outline-none"
-                  />
-                  <p className="text-[10px] text-slate-500 mt-1">
-                    For Gmail, use a 16-character <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noreferrer" className="text-indigo-400 hover:underline">Google App Password</a> with 2FA enabled.
-                  </p>
                 </div>
-              </div>
 
-              {/* Sender Details */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    From Email Address
+                {/* Host & Port */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs font-medium text-slate-300 mb-1">
+                      SMTP Host Address
+                    </label>
+                    <input
+                      type="text"
+                      value={smtpHost}
+                      onChange={(e) => setSmtpHost(e.target.value)}
+                      placeholder="e.g. smtp.gmail.com"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-white/10 text-white text-xs font-mono focus:border-indigo-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-medium text-slate-300">
+                        Port
+                      </label>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => { setSmtpPort(587); setSmtpSecure(false); setSmtpRequireTls(true); }}
+                          className={`text-[9px] px-1.5 py-0.5 rounded font-mono ${smtpPort === 587 ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-slate-200'}`}
+                        >
+                          587
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setSmtpPort(465); setSmtpSecure(true); setSmtpRequireTls(false); }}
+                          className={`text-[9px] px-1.5 py-0.5 rounded font-mono ${smtpPort === 465 ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-slate-200'}`}
+                        >
+                          465
+                        </button>
+                      </div>
+                    </div>
+                    <input
+                      type="number"
+                      value={smtpPort}
+                      onChange={(e) => setSmtpPort(Number(e.target.value))}
+                      placeholder="587"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-white/10 text-white text-xs font-mono focus:border-indigo-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                {/* Encryption Options */}
+                <div className="flex flex-wrap items-center gap-6 p-3 bg-slate-950/50 border border-white/5 rounded-xl text-xs">
+                  <label className="flex items-center gap-2 cursor-pointer text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={smtpSecure}
+                      onChange={(e) => {
+                        setSmtpSecure(e.target.checked);
+                        if (e.target.checked) setSmtpPort(465);
+                      }}
+                      className="rounded border-slate-700 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <span>SSL / TLS Direct (Standard for Port 465)</span>
                   </label>
-                  <input
-                    type="email"
-                    value={smtpFromEmail}
-                    onChange={(e) => setSmtpFromEmail(e.target.value)}
-                    placeholder="solarastra.in@gmail.com"
-                    className="w-full px-3.5 py-2 rounded-xl bg-slate-950/60 border border-white/10 text-white text-xs font-mono focus:border-indigo-500 focus:outline-none"
-                  />
-                </div>
 
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Sender Display Name
+                  <label className="flex items-center gap-2 cursor-pointer text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={smtpRequireTls}
+                      onChange={(e) => {
+                        setSmtpRequireTls(e.target.checked);
+                        if (e.target.checked) setSmtpPort(587);
+                      }}
+                      className="rounded border-slate-700 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <span>STARTTLS Mandatory (Standard for Port 587)</span>
                   </label>
-                  <input
-                    type="text"
-                    value={smtpFromName}
-                    onChange={(e) => setSmtpFromName(e.target.value)}
-                    placeholder="WhyOr Dispatch AI"
-                    className="w-full px-3.5 py-2 rounded-xl bg-slate-950/60 border border-white/10 text-white text-xs focus:border-indigo-500 focus:outline-none"
-                  />
                 </div>
 
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Reply-To Address
-                  </label>
-                  <input
-                    type="email"
-                    value={smtpReplyTo}
-                    onChange={(e) => setSmtpReplyTo(e.target.value)}
-                    placeholder="solarastra.in@gmail.com"
-                    className="w-full px-3.5 py-2 rounded-xl bg-slate-950/60 border border-white/10 text-white text-xs font-mono focus:border-indigo-500 focus:outline-none"
-                  />
-                </div>
-              </div>
+                {/* Auth Credentials */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-medium text-slate-300 mb-1">
+                      Username / Account Email
+                    </label>
+                    <input
+                      type="text"
+                      value={smtpUser}
+                      onChange={(e) => setSmtpUser(e.target.value)}
+                      placeholder="e.g. solarastra.in@gmail.com"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-white/10 text-white text-xs font-mono focus:border-indigo-500 focus:outline-none"
+                    />
+                  </div>
 
-              {/* Pre-Save Trial Validation Status Box */}
-              <div className="p-4 rounded-xl bg-slate-950/70 border border-white/10 space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <MailCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-                    <div>
-                      <h4 className="text-xs font-bold text-white uppercase tracking-wider font-mono">
-                        SuperAdmin Pre-Save Trial Validation
-                      </h4>
-                      <p className="text-[11px] text-slate-400">
-                        Dispatch a trial email to <span className="font-mono text-purple-300 font-semibold">{currentUser?.email || 'solarastra.in@gmail.com'}</span> to validate uncommitted SMTP settings before persisting to Firestore.
-                      </p>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-medium text-slate-300">
+                        Password / App Password
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="text-[11px] text-slate-400 hover:text-slate-200 flex items-center gap-1 cursor-pointer"
+                      >
+                        {showPassword ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                        <span>{showPassword ? 'Hide' : 'Show'}</span>
+                      </button>
+                    </div>
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      value={smtpPass}
+                      onChange={(e) => setSmtpPass(e.target.value)}
+                      placeholder={hasStoredPassword ? '••••••••••••••••' : 'Enter password or 16-char App Password'}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-white/10 text-white text-xs font-mono focus:border-indigo-500 focus:outline-none"
+                    />
+                    <div className="flex items-center justify-between mt-1 text-[10px]">
+                      <span className="text-slate-500">Google 16-character App Password</span>
+                      <a
+                        href="https://myaccount.google.com/apppasswords"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-indigo-400 hover:text-indigo-300 inline-flex items-center gap-1 hover:underline"
+                      >
+                        <span>Generate Key</span>
+                        <ExternalLink className="w-2.5 h-2.5" />
+                      </a>
                     </div>
                   </div>
-                  <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-mono shrink-0 uppercase font-semibold border ${
-                    isVerified
-                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
-                      : 'bg-amber-500/10 text-amber-300 border-amber-500/20'
-                  }`}>
-                    <span className={`w-1.5 h-1.5 rounded-full ${isVerified ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
-                    {isVerified ? 'Validated & Ready' : 'Pending Pre-Save Test'}
-                  </span>
                 </div>
 
-                {trialValidationResult && (
-                  <div className={`p-3.5 rounded-xl border text-xs flex items-start gap-3 ${
-                    trialValidationResult.success
-                      ? 'bg-emerald-950/40 border-emerald-500/30 text-emerald-200'
-                      : 'bg-rose-950/50 border-rose-500/40 text-rose-200'
-                  }`}>
-                    {trialValidationResult.success ? (
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                    ) : (
-                      <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                    )}
-                    <div className="space-y-1 min-w-0 flex-1">
-                      <div className="font-semibold text-xs flex items-center justify-between gap-2">
-                        <span>
-                          {trialValidationResult.success
-                            ? `Trial Email Delivered to ${trialValidationResult.recipient} (${trialValidationResult.durationMs}ms)`
-                            : `Trial Email Delivery Failed to ${trialValidationResult.recipient}`}
-                        </span>
-                        {trialValidationResult.success && (
-                          <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono">
-                            Ready to Save
+                {/* Sender Details */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-xs font-medium text-slate-300 mb-1">
+                      From Email Address
+                    </label>
+                    <input
+                      type="email"
+                      value={smtpFromEmail}
+                      onChange={(e) => setSmtpFromEmail(e.target.value)}
+                      placeholder="solarastra.in@gmail.com"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-white/10 text-white text-xs font-mono focus:border-indigo-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-slate-300 mb-1">
+                      Sender Display Name
+                    </label>
+                    <input
+                      type="text"
+                      value={smtpFromName}
+                      onChange={(e) => setSmtpFromName(e.target.value)}
+                      placeholder="WhyOr Dispatch AI Enterprise"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-white/10 text-white text-xs focus:border-indigo-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-slate-300 mb-1">
+                      Reply-To Address
+                    </label>
+                    <input
+                      type="email"
+                      value={smtpReplyTo}
+                      onChange={(e) => setSmtpReplyTo(e.target.value)}
+                      placeholder="solarastra.in@gmail.com"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-white/10 text-white text-xs font-mono focus:border-indigo-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                {/* Advanced Socket & Connection Pooling Toggle */}
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowAdvancedSmtp(!showAdvancedSmtp)}
+                    className="flex items-center gap-2 text-xs font-semibold text-indigo-400 hover:text-indigo-300 transition-colors cursor-pointer"
+                  >
+                    <Sliders className="w-3.5 h-3.5" />
+                    <span>{showAdvancedSmtp ? 'Hide Advanced Socket & Pooling Options' : 'Show Advanced Socket & Connection Pooling Options'}</span>
+                    <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showAdvancedSmtp ? 'rotate-180' : ''}`} />
+                  </button>
+
+                  {showAdvancedSmtp && (
+                    <div className="mt-3 p-4 rounded-xl bg-slate-950/60 border border-white/10 space-y-4 animate-fadeIn">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                        <div>
+                          <label className="block text-xs font-medium text-slate-300 mb-1">
+                            Connection Timeout (ms)
+                          </label>
+                          <input
+                            type="number"
+                            value={smtpConnectionTimeout}
+                            onChange={(e) => setSmtpConnectionTimeout(Number(e.target.value))}
+                            placeholder="6000"
+                            className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-white text-xs font-mono focus:border-indigo-500 focus:outline-none"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-medium text-slate-300 mb-1">
+                            Greeting Timeout (ms)
+                          </label>
+                          <input
+                            type="number"
+                            value={smtpGreetingTimeout}
+                            onChange={(e) => setSmtpGreetingTimeout(Number(e.target.value))}
+                            placeholder="5000"
+                            className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-white text-xs font-mono focus:border-indigo-500 focus:outline-none"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-medium text-slate-300 mb-1">
+                            Max Socket Connections
+                          </label>
+                          <input
+                            type="number"
+                            value={smtpMaxConnections}
+                            onChange={(e) => setSmtpMaxConnections(Number(e.target.value))}
+                            placeholder="5"
+                            className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-white text-xs font-mono focus:border-indigo-500 focus:outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="flex items-center gap-3 p-3 rounded-lg bg-slate-900/80 border border-white/5">
+                          <input
+                            type="checkbox"
+                            id="chk-smtp-pool"
+                            checked={smtpPool}
+                            onChange={(e) => setSmtpPool(e.target.checked)}
+                            className="rounded border-slate-700 text-indigo-600 focus:ring-indigo-500"
+                          />
+                          <label htmlFor="chk-smtp-pool" className="text-xs text-slate-200 cursor-pointer">
+                            <span className="font-semibold block">Enable Connection Pooling</span>
+                            <span className="text-[10px] text-slate-400">Re-uses TLS sockets for rapid notification bursts</span>
+                          </label>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-medium text-slate-300 mb-1">
+                            Authentication Mechanism
+                          </label>
+                          <select
+                            value={smtpAuthMethod}
+                            onChange={(e) => setSmtpAuthMethod(e.target.value)}
+                            className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-white text-xs focus:border-indigo-500 focus:outline-none"
+                          >
+                            <option value="LOGIN">LOGIN (Default / Standard)</option>
+                            <option value="PLAIN">PLAIN (API Keys / Token Bearer)</option>
+                            <option value="CRAM-MD5">CRAM-MD5 (Challenge-Response)</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Pre-Save Trial Validation Status Box */}
+                <div className="p-4 rounded-xl bg-slate-950/70 border border-white/10 space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <MailCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <div>
+                        <h4 className="text-xs font-bold text-white uppercase tracking-wider font-mono">
+                          SuperAdmin Pre-Save Trial Validation
+                        </h4>
+                        <p className="text-[11px] text-slate-400">
+                          Dispatch a trial email to <span className="font-mono text-purple-300 font-semibold">{currentUser?.email || 'solarastra.in@gmail.com'}</span> to validate uncommitted SMTP settings before persisting to Firestore.
+                        </p>
+                      </div>
+                    </div>
+                    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-mono shrink-0 uppercase font-semibold border ${
+                      isVerified
+                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                        : 'bg-amber-500/10 text-amber-300 border-amber-500/20'
+                    }`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${isVerified ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+                      {isVerified ? 'Validated & Ready' : 'Pending Pre-Save Test'}
+                    </span>
+                  </div>
+
+                  {trialValidationResult && (
+                    <div className={`p-3.5 rounded-xl border text-xs flex items-start gap-3 ${
+                      trialValidationResult.success
+                        ? 'bg-emerald-950/40 border-emerald-500/30 text-emerald-200'
+                        : 'bg-rose-950/50 border-rose-500/40 text-rose-200'
+                    }`}>
+                      {trialValidationResult.success ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                      ) : (
+                        <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                      )}
+                      <div className="space-y-1 min-w-0 flex-1">
+                        <div className="font-semibold text-xs flex items-center justify-between gap-2">
+                          <span>
+                            {trialValidationResult.success
+                              ? `Trial Email Delivered to ${trialValidationResult.recipient} (${trialValidationResult.durationMs}ms)`
+                              : `Trial Email Delivery Failed to ${trialValidationResult.recipient}`}
                           </span>
+                          {trialValidationResult.success && (
+                            <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono">
+                              Ready to Save
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[11px] text-slate-300 leading-relaxed break-words">
+                          {trialValidationResult.success
+                            ? `Message-ID: ${trialValidationResult.messageId} • Host socket handshake confirmed on ${smtpHost}:${smtpPort}`
+                            : trialValidationResult.error}
+                        </div>
+                        {!trialValidationResult.success && trialValidationResult.error?.includes('BadCredentials') && (
+                          <div className="text-[11px] bg-rose-900/30 border border-rose-500/20 rounded-lg p-2 mt-2 text-rose-300">
+                            <strong>💡 Gmail Tip:</strong> Use a 16-character App Password from{' '}
+                            <a
+                              href="https://myaccount.google.com/apppasswords"
+                              target="_blank"
+                              rel="noreferrer"
+                              className="underline text-indigo-300 hover:text-indigo-200 font-semibold"
+                            >
+                              myaccount.google.com/apppasswords
+                            </a>{' '}
+                            instead of your account password.
+                          </div>
                         )}
                       </div>
-                      <div className="text-[11px] text-slate-300 leading-relaxed break-words">
-                        {trialValidationResult.success
-                          ? `Message-ID: ${trialValidationResult.messageId} • Host socket handshake confirmed on ${smtpHost}:${smtpPort}`
-                          : trialValidationResult.error}
-                      </div>
-                      {!trialValidationResult.success && trialValidationResult.error?.includes('BadCredentials') && (
-                        <div className="text-[11px] bg-rose-900/30 border border-rose-500/20 rounded-lg p-2 mt-2 text-rose-300">
-                          <strong>💡 Gmail Tip:</strong> Use a 16-character App Password from{' '}
-                          <a
-                            href="https://myaccount.google.com/apppasswords"
-                            target="_blank"
-                            rel="noreferrer"
-                            className="underline text-indigo-300 hover:text-indigo-200 font-semibold"
-                          >
-                            myaccount.google.com/apppasswords
-                          </a>{' '}
-                          instead of your account password.
-                        </div>
-                      )}
                     </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Action Buttons */}
-              <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    id="btn-verify-smtp-handshake"
-                    onClick={handleVerifySmtp}
-                    disabled={isVerifying || isSendingTrial}
-                    className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/10 text-white text-xs font-medium transition-all cursor-pointer disabled:opacity-50"
-                  >
-                    {isVerifying ? (
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Zap className="w-3.5 h-3.5 text-amber-400" />
-                    )}
-                    <span>{isVerifying ? 'Testing Socket...' : 'Verify Handshake'}</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    id="btn-send-trial-email"
-                    onClick={handleSendTrialEmailToSuperAdmin}
-                    disabled={isSendingTrial || isVerifying || isSaving}
-                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-500 hover:to-emerald-500 text-white text-xs font-semibold shadow-md shadow-emerald-600/20 transition-all cursor-pointer disabled:opacity-50"
-                  >
-                    {isSendingTrial ? (
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Send className="w-3.5 h-3.5" />
-                    )}
-                    <span>{isSendingTrial ? 'Sending Trial Email...' : `Send Trial Email to ${currentUser?.email || 'solarastra.in@gmail.com'}`}</span>
-                  </button>
-                </div>
-
-                <button
-                  type="button"
-                  id="btn-save-smtp-firestore"
-                  onClick={handleSaveSmtp}
-                  disabled={isSaving || isSendingTrial}
-                  className={`flex items-center gap-2 px-5 py-2 rounded-xl text-white text-xs font-semibold shadow-lg transition-all cursor-pointer disabled:opacity-50 ${
-                    isVerified
-                      ? 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-600/30 ring-1 ring-emerald-400/40'
-                      : 'bg-indigo-600/90 hover:bg-indigo-500 shadow-indigo-600/20'
-                  }`}
-                >
-                  {isSaving ? (
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <Check className="w-3.5 h-3.5" />
                   )}
-                  <span>Save Configuration to Firestore</span>
-                </button>
+                </div>
+
+                {/* Action Buttons */}
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      id="btn-verify-smtp-handshake"
+                      onClick={handleVerifySmtp}
+                      disabled={isVerifying || isSendingTrial}
+                      className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/10 text-white text-xs font-medium transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      {isVerifying ? (
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Zap className="w-3.5 h-3.5 text-amber-400" />
+                      )}
+                      <span>{isVerifying ? 'Testing Socket...' : 'Verify Handshake'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      id="btn-send-trial-email"
+                      onClick={handleSendTrialEmailToSuperAdmin}
+                      disabled={isSendingTrial || isVerifying || isSaving}
+                      className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-500 hover:to-emerald-500 text-white text-xs font-semibold shadow-md shadow-emerald-600/20 transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      {isSendingTrial ? (
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Send className="w-3.5 h-3.5" />
+                      )}
+                      <span>{isSendingTrial ? 'Sending Trial Email...' : `Send Trial Email to ${currentUser?.email || 'solarastra.in@gmail.com'}`}</span>
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    id="btn-save-smtp-firestore"
+                    onClick={handleSaveSmtp}
+                    disabled={isSaving || isSendingTrial}
+                    className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-white text-xs font-semibold shadow-lg transition-all cursor-pointer disabled:opacity-50 ${
+                      isVerified
+                        ? 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-600/30 ring-1 ring-emerald-400/40'
+                        : 'bg-indigo-600/90 hover:bg-indigo-500 shadow-indigo-600/20'
+                    }`}
+                  >
+                    {isSaving ? (
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Check className="w-3.5 h-3.5" />
+                    )}
+                    <span>Save Configuration to Firestore</span>
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
 
-          {/* Test Email Dispatcher & Live Log */}
-          <div className="lg:col-span-5 space-y-6">
-            {/* Live Dispatch Tool */}
-            <div className="bg-slate-900/60 border border-white/10 rounded-2xl p-6 backdrop-blur-xl space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-base font-bold text-white flex items-center gap-2">
-                    <Send className="w-4 h-4 text-emerald-400" />
-                    Live Test Email Dispatcher
-                  </h3>
-                  <p className="text-xs text-slate-400">
-                    Send a real-time test notification to verify end-to-end deliverability.
-                  </p>
+            {/* Test Email Dispatcher & Live Log */}
+            <div className="lg:col-span-5 space-y-6">
+              {/* Live Dispatch Tool */}
+              <div className="bg-slate-900/70 border border-white/10 rounded-2xl p-6 backdrop-blur-xl space-y-4">
+                <div className="flex items-center justify-between pb-2 border-b border-white/5">
+                  <div>
+                    <h3 className="text-base font-bold text-white flex items-center gap-2">
+                      <Send className="w-4 h-4 text-emerald-400" />
+                      Live Test Email Dispatcher
+                    </h3>
+                    <p className="text-xs text-slate-400">
+                      Send a real-time notification to verify end-to-end deliverability.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setTestRecipient(currentUser?.email || 'solarastra.in@gmail.com')}
+                    className="text-[10px] text-purple-300 hover:text-purple-200 bg-purple-950/40 hover:bg-purple-900/50 border border-purple-800/40 px-2 py-1 rounded-lg font-mono transition-colors cursor-pointer"
+                  >
+                    Fill SuperAdmin
+                  </button>
                 </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">
+                    Recipient Email Address
+                  </label>
+                  <input
+                    type="email"
+                    value={testRecipient}
+                    onChange={(e) => setTestRecipient(e.target.value)}
+                    placeholder="solarastra.in@gmail.com"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-white/10 text-white text-xs font-mono focus:border-indigo-500 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">
+                    Notification Template
+                  </label>
+                  <select
+                    value={testTemplate}
+                    onChange={(e) => {
+                      setTestTemplate(e.target.value);
+                      if (e.target.value === 'test_verification') {
+                        setTestSubject('[WhyOr Dispatch AI] Live SMTP Test Verification');
+                      } else if (e.target.value === 'quota_alert') {
+                        setTestSubject('⚠️ [WhyOr Quota Alert] Provider Monthly Budget Threshold Reached');
+                      } else if (e.target.value === 'failover_alert') {
+                        setTestSubject('🚨 [WhyOr Dispatch] Autonomous Routing Failover Triggered');
+                      } else {
+                        setTestSubject('🔒 [WhyOr Audit] Company Security Vault Update Notification');
+                      }
+                    }}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-white/10 text-white text-xs focus:border-indigo-500 focus:outline-none"
+                  >
+                    <option value="test_verification">Standard SMTP Handshake Test</option>
+                    <option value="quota_alert">Monthly Spend Quota Alert Template</option>
+                    <option value="failover_alert">Autonomous Dispatch Failover Event</option>
+                    <option value="security_audit">Company Security Vault Audit Report</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">
+                    Custom Dispatch Message
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={testCustomMessage}
+                    onChange={(e) => setTestCustomMessage(e.target.value)}
+                    className="w-full px-3.5 py-2 rounded-xl bg-slate-950/70 border border-white/10 text-white text-xs focus:border-indigo-500 focus:outline-none resize-none"
+                  />
+                </div>
+
                 <button
                   type="button"
-                  onClick={() => setTestRecipient(currentUser?.email || 'solarastra.in@gmail.com')}
-                  className="text-[10px] text-purple-300 hover:text-purple-200 bg-purple-950/40 hover:bg-purple-900/50 border border-purple-800/40 px-2 py-1 rounded-lg font-mono transition-colors"
+                  onClick={handleSendTestEmail}
+                  disabled={isSendingTest}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-semibold shadow-lg shadow-emerald-600/20 transition-all cursor-pointer disabled:opacity-50"
                 >
-                  Fill SuperAdmin
+                  {isSendingTest ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Send className="w-4 h-4" />
+                  )}
+                  <span>{isSendingTest ? 'Dispatched via SMTP...' : 'Send Live Test Email'}</span>
                 </button>
               </div>
 
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">
-                  Recipient Email
-                </label>
-                <input
-                  type="email"
-                  value={testRecipient}
-                  onChange={(e) => setTestRecipient(e.target.value)}
-                  placeholder="solarastra.in@gmail.com"
-                  className="w-full px-3.5 py-2 rounded-xl bg-slate-950/60 border border-white/10 text-white text-xs font-mono focus:border-indigo-500 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">
-                  Notification Template
-                </label>
-                <select
-                  value={testTemplate}
-                  onChange={(e) => {
-                    setTestTemplate(e.target.value);
-                    if (e.target.value === 'test_verification') {
-                      setTestSubject('[WhyOr Dispatch AI] Live SMTP Test Verification');
-                    } else if (e.target.value === 'quota_alert') {
-                      setTestSubject('⚠️ [WhyOr Quota Alert] Provider Monthly Budget Threshold Reached');
-                    } else if (e.target.value === 'failover_alert') {
-                      setTestSubject('🚨 [WhyOr Dispatch] Autonomous Routing Failover Triggered');
-                    } else {
-                      setTestSubject('🔒 [WhyOr Audit] Company Security Vault Update Notification');
-                    }
-                  }}
-                  className="w-full px-3.5 py-2 rounded-xl bg-slate-950/60 border border-white/10 text-white text-xs focus:border-indigo-500 focus:outline-none"
-                >
-                  <option value="test_verification">Standard SMTP Handshake Test</option>
-                  <option value="quota_alert">Monthly Spend Quota Alert Template</option>
-                  <option value="failover_alert">Autonomous Dispatch Failover Event</option>
-                  <option value="security_audit">Company Security Vault Audit Report</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">
-                  Custom Dispatch Message
-                </label>
-                <textarea
-                  rows={2}
-                  value={testCustomMessage}
-                  onChange={(e) => setTestCustomMessage(e.target.value)}
-                  className="w-full px-3.5 py-2 rounded-xl bg-slate-950/60 border border-white/10 text-white text-xs focus:border-indigo-500 focus:outline-none resize-none"
-                />
-              </div>
-
-              <button
-                type="button"
-                onClick={handleSendTestEmail}
-                disabled={isSendingTest}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-semibold shadow-lg shadow-emerald-600/20 transition-all cursor-pointer disabled:opacity-50"
-              >
-                {isSendingTest ? (
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Send className="w-4 h-4" />
-                )}
-                <span>{isSendingTest ? 'Dispatched via SMTP...' : 'Send Live Test Email'}</span>
-              </button>
-            </div>
-
-            {/* Email Dispatch History Log */}
-            <div className="bg-slate-900/60 border border-white/10 rounded-2xl p-6 backdrop-blur-xl space-y-3">
-              <div className="flex items-center justify-between">
-                <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wider font-mono">
-                  Outbound Dispatch Logs ({emailLogs.length})
-                </h4>
-                <button
-                  onClick={fetchEmailLogs}
-                  className="text-slate-400 hover:text-slate-200 p-1 hover:bg-slate-800 rounded transition-colors"
-                  title="Refresh Email Logs"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                </button>
-              </div>
-
-              <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-                {emailLogs.length === 0 ? (
-                  <div className="text-center py-6 text-xs text-slate-500 font-mono">
-                    No emails dispatched yet. Click "Send Live Test Email" above.
-                  </div>
-                ) : (
-                  emailLogs.map((log) => (
-                    <div
-                      key={log.id}
-                      className="p-2.5 rounded-xl bg-slate-950/50 border border-white/5 flex items-start justify-between gap-3 text-[11px]"
-                    >
-                      <div className="space-y-0.5 min-w-0">
-                        <div className="font-semibold text-slate-200 truncate">
-                          {log.subject}
-                        </div>
-                        <div className="text-[10px] text-slate-400 font-mono flex items-center gap-2">
-                          <span>To: {log.to}</span>
-                          <span>•</span>
-                          <span>{new Date(log.sentAt).toLocaleTimeString()}</span>
-                        </div>
-                      </div>
-                      <span className={`px-2 py-0.5 rounded-full text-[9px] font-mono shrink-0 uppercase font-semibold ${
-                        log.status === 'sent'
-                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/30'
-                          : 'bg-rose-500/20 text-rose-300 border border-rose-400/30'
-                      }`}>
-                        {log.status}
-                      </span>
+              {/* Email Dispatch History Log */}
+              <div className="bg-slate-900/70 border border-white/10 rounded-2xl p-6 backdrop-blur-xl space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wider font-mono">
+                      Outbound Logs ({emailLogs.length})
+                    </h4>
+                    <div className="flex items-center gap-1 bg-slate-950/60 p-0.5 rounded-lg border border-white/5">
+                      <button
+                        type="button"
+                        onClick={() => setEmailLogFilter('all')}
+                        className={`px-2 py-0.5 rounded text-[10px] font-mono transition-colors ${
+                          emailLogFilter === 'all' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        All
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEmailLogFilter('sent')}
+                        className={`px-2 py-0.5 rounded text-[10px] font-mono transition-colors ${
+                          emailLogFilter === 'sent' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        Sent
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEmailLogFilter('failed')}
+                        className={`px-2 py-0.5 rounded text-[10px] font-mono transition-colors ${
+                          emailLogFilter === 'failed' ? 'bg-rose-600 text-white' : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        Failed
+                      </button>
                     </div>
-                  ))
-                )}
+                  </div>
+
+                  <div className="flex items-center gap-1">
+                    {emailLogs.length > 0 && (
+                      <button
+                        onClick={handleClearEmailLogs}
+                        disabled={isClearingLogs}
+                        className="text-rose-400 hover:text-rose-300 p-1.5 hover:bg-rose-950/40 rounded-lg transition-colors cursor-pointer"
+                        title="Purge Outbound Logs"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                    <button
+                      onClick={fetchEmailLogs}
+                      className="text-slate-400 hover:text-slate-200 p-1.5 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                      title="Refresh Email Logs"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                  {emailLogs.length === 0 ? (
+                    <div className="text-center py-8 text-xs text-slate-500 font-mono">
+                      No emails dispatched yet. Click "Send Live Test Email" above.
+                    </div>
+                  ) : (
+                    emailLogs
+                      .filter((log) => (emailLogFilter === 'all' ? true : log.status === emailLogFilter))
+                      .map((log) => (
+                        <div
+                          key={log.id}
+                          className="p-2.5 rounded-xl bg-slate-950/60 border border-white/5 flex items-start justify-between gap-3 text-[11px]"
+                        >
+                          <div className="space-y-0.5 min-w-0">
+                            <div className="font-semibold text-slate-200 truncate">
+                              {log.subject}
+                            </div>
+                            <div className="text-[10px] text-slate-400 font-mono flex items-center gap-2">
+                              <span>To: {log.to}</span>
+                              <span>•</span>
+                              <span>{new Date(log.sentAt).toLocaleTimeString()}</span>
+                            </div>
+                            {log.errorMessage && (
+                              <div className="text-[10px] text-rose-400 font-mono line-clamp-1">
+                                {log.errorMessage}
+                              </div>
+                            )}
+                          </div>
+                          <span className={`px-2 py-0.5 rounded-full text-[9px] font-mono shrink-0 uppercase font-semibold ${
+                            log.status === 'sent'
+                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/30'
+                              : 'bg-rose-500/20 text-rose-300 border border-rose-400/30'
+                          }`}>
+                            {log.status}
+                          </span>
+                        </div>
+                      ))
+                  )}
+                </div>
               </div>
             </div>
           </div>
-        </div>
         </div>
       )}
 

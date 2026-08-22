@@ -106,7 +106,7 @@ export const AutoRoutingExplainabilityPanel: React.FC<AutoRoutingExplainabilityP
     if (!qualityTracker) {
       return { alpha: 12, beta: 2, mean: 0.857, variance: 0.008 };
     }
-    const state = qualityTracker.getPosterior(taskDistribution.primaryArchetype, chosenModel.provider, chosenModel.id);
+    const state = qualityTracker.getBeta(taskDistribution.primaryArchetype, chosenModel.provider, chosenModel.id);
     const mean = state.alpha / (state.alpha + state.beta);
     const variance = (state.alpha * state.beta) / (Math.pow(state.alpha + state.beta, 2) * (state.alpha + state.beta + 1));
     return {

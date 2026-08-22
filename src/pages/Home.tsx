@@ -196,6 +196,25 @@ export default function Home({
             </div>
           ))}
         </div>
+
+        {/* Live Bayesian Inspector CTA */}
+        <div className="pt-2 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-4 rounded-2xl bg-amber-500/10 border border-amber-400/25 backdrop-blur-md">
+          <div className="space-y-0.5">
+            <div className="text-xs font-bold text-amber-300 font-mono flex items-center gap-1.5">
+              <span>Interactive Bayesian Inspector Mode</span>
+              <span className="px-1.5 py-0.2 rounded bg-amber-400/20 text-amber-200 text-[10px]">Beta(α,β)</span>
+            </div>
+            <p className="text-xs text-slate-300">
+              Inspect real-time probability curves across all 7 archetypes and run simulated 300-trial convergence tests.
+            </p>
+          </div>
+          <button
+            onClick={() => onNavigateTab ? onNavigateTab('quality') : null}
+            className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-bold text-xs font-mono shrink-0 cursor-pointer shadow-md transition-all"
+          >
+            Launch Live Inspector →
+          </button>
+        </div>
       </section>
 
       {/* GOVERNANCE */}

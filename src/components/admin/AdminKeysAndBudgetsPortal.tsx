@@ -4,36 +4,113 @@ import {
   AlertTriangle, 
   CheckCircle2, 
   DollarSign, 
-  Clock, 
   ShieldCheck, 
   Save, 
   RefreshCw, 
   Eye, 
   EyeOff, 
-  Sliders, 
   AlertCircle,
   Zap,
-  TrendingDown,
-  Info
+  Sparkles,
+  Info,
+  ExternalLink,
+  Lock,
+  Trash2,
+  Check,
+  X,
+  Globe,
+  Terminal,
+  ArrowRight,
+  Search,
+  Filter,
+  Activity,
+  Cpu,
+  Layers
 } from 'lucide-react';
 import { 
   AdminKeyConfig, 
   loadAdminKeyConfigsFromFirestore, 
   saveAdminKeyConfigToFirestore,
   recordAuditLogToFirestore,
+  saveCredentialToFirestore,
   auth
 } from '../../lib/firebase';
+import { authedFetch } from '../../lib/firebaseClient';
 
 interface AdminKeysAndBudgetsPortalProps {
   onNotifyStatus?: (message: { type: 'success' | 'error' | 'info'; text: string }) => void;
 }
 
+interface ProviderSubscriptionOption {
+  tierName: string;
+  priceLabel: string;
+  description: string;
+  tokenPolicy: string;
+}
+
+const SUBSCRIPTION_TIER_OPTIONS: Record<string, ProviderSubscriptionOption[]> = {
+  google: [
+    { tierName: 'Google One AI Premium / Gemini Advanced', priceLabel: '$19.99/mo', description: 'Access Gemini 3.7 Flash & 3.1 Pro with 2M token context window', tokenPolicy: 'Flat rate subscription bypass ($0.00/token)' },
+    { tierName: 'Google Workspace Enterprise Gemini', priceLabel: '$30.00/user/mo', description: 'Enterprise workspace Gemini integration with dedicated quotas', tokenPolicy: 'Enterprise managed quota' },
+  ],
+  anthropic: [
+    { tierName: 'Claude Pro Unlimited', priceLabel: '$20.00/mo', description: 'Direct Claude 3.7 Sonnet & 3.5 Haiku reasoning with fast dispatch', tokenPolicy: 'Flat rate subscription bypass ($0.00/token)' },
+    { tierName: 'Claude Team / Enterprise Seat', priceLabel: '$30.00/user/mo', description: 'Team tier with 5x Claude 3.7 quota and admin workspace routing', tokenPolicy: 'Enterprise pooled quota' },
+  ],
+  openai: [
+    { tierName: 'ChatGPT Plus', priceLabel: '$20.00/mo', description: 'Access GPT-4o, o3-mini & GPT-4.5 with standard limits', tokenPolicy: 'Flat rate subscription bypass ($0.00/token)' },
+    { tierName: 'ChatGPT Pro Unlimited Reasoning', priceLabel: '$200.00/mo', description: 'Highest-tier unlimited o1/o3-mini reasoning & priority compute', tokenPolicy: 'Unlimited Flat compute' },
+    { tierName: 'ChatGPT Team / Enterprise', priceLabel: '$30.00/user/mo', description: 'Enterprise domain workspace with SOC-2 compliant routing', tokenPolicy: 'Team pooled tokens' },
+  ],
+  deepseek: [
+    { tierName: 'DeepSeek Platform Enterprise Pro', priceLabel: '$0.00/mo Base (Pay-as-you-go)', description: 'Direct DeepSeek R1 & V3 reasoning with fast multi-region relay', tokenPolicy: 'Ultra-low cost ($0.14-$0.55/M tokens)' },
+    { tierName: 'DeepSeek VIP Web Session Relay', priceLabel: 'Flat Rate Session', description: 'Relayed session token tunnel with unrestricted reasoning', tokenPolicy: 'Flat rate session relay' },
+  ],
+  groq: [
+    { tierName: 'Groq Cloud Enterprise LPU', priceLabel: 'Custom / Pay-as-you-go', description: 'Sub-100ms ultra-low latency inference on Llama-3.3 70B & 8B LPUs', tokenPolicy: 'High throughput dedicated LPU queue' },
+    { tierName: 'Groq Dev Tier', priceLabel: 'Free Tier Available', description: 'Development tier with rate limits up to 30 RPM', tokenPolicy: 'Rate limited dev queue' },
+  ],
+  mistral: [
+    { tierName: 'Mistral Platform Pro', priceLabel: 'Pay-as-you-go', description: 'Access Mistral Large 2, Codestral 25.01, and Pixtral vision models', tokenPolicy: 'Direct platform billing' },
+    { tierName: 'Le Chat Enterprise Subscription', priceLabel: '$15.00/mo', description: 'Enterprise assistant subscription session bridge', tokenPolicy: 'Subscription session relay' },
+  ],
+  xai: [
+    { tierName: 'xAI SuperGrok / Enterprise', priceLabel: '$30.00/mo', description: 'Access Grok 3 Reasoning, Grok 2, and live X/Twitter grounding', tokenPolicy: 'Enterprise subscription quota' },
+    { tierName: 'xAI Direct Platform API', priceLabel: 'Pay-as-you-go', description: 'Direct API access with high-concurrency rate limits', tokenPolicy: 'Direct platform billing' },
+  ]
+};
+
 export const AdminKeysAndBudgetsPortal: React.FC<AdminKeysAndBudgetsPortalProps> = ({ onNotifyStatus }) => {
   const [keys, setKeys] = useState<AdminKeyConfig[]>([]);
   const [visibleKeyIds, setVisibleKeyIds] = useState<Record<string, boolean>>({});
   const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [savingKeyId, setSavingKeyId] = useState<string | null>(null);
+  const [testingKeyId, setTestingKeyId] = useState<string | null>(null);
+  const [testResults, setTestResults] = useState<Record<string, { success: boolean; message: string; latencyMs?: number; detectedModels?: string[] }>>({});
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+  
+  // Search & Filter
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'configured' | 'unconfigured' | 'overage'>('all');
+
+  // Subscription Enrollment Modal
+  const [enrollModalConfig, setEnrollModalConfig] = useState<{
+    isOpen: boolean;
+    provider: string;
+    providerName: string;
+    keyId: string;
+    currentTier?: string;
+    currentEmail?: string;
+  } | null>(null);
+
+  const [enrollTier, setEnrollTier] = useState<string>('');
+  const [enrollEmail, setEnrollEmail] = useState<string>('solarastra.in@gmail.com');
+  const [enrollAuthType, setEnrollAuthType] = useState<'session_token' | 'google' | 'local_proxy'>('session_token');
+  const [enrollSessionToken, setEnrollSessionToken] = useState<string>('');
+  const [enrollProxyUrl, setEnrollProxyUrl] = useState<string>('http://localhost:8080/v1');
+  const [isEnrolling, setIsEnrolling] = useState<boolean>(false);
+  const [enrollError, setEnrollError] = useState<string | null>(null);
 
   const fetchKeys = async () => {
     setIsLoading(true);
@@ -60,8 +137,30 @@ export const AdminKeysAndBudgetsPortal: React.FC<AdminKeysAndBudgetsPortalProps>
       const isBudgetOver = updated.monthlyBudgetLimit > 0 && updated.currentSpend >= updated.monthlyBudgetLimit;
       const isDayUsageOver = updated.dailyUsageLimit > 0 && updated.todaySpend >= updated.dailyUsageLimit;
 
+      const hasKey = Boolean(updated.apiKey && updated.apiKey.trim().length > 0);
+      const hasSub = Boolean(updated.hasSubscription && (updated.subscriptionTier || updated.sessionTokenMasked || updated.subscriptionEmail));
+      const isConfigured = hasKey || hasSub;
+
+      let status = updated.status;
+      let isActive = Boolean(updated.isActive);
+      if (!isConfigured) {
+        status = 'unconfigured';
+        isActive = false;
+      } else if (isBudgetOver) {
+        status = 'budget_exceeded';
+      } else if (isDayUsageOver) {
+        status = 'day_limit_exceeded';
+      } else if (isActive) {
+        status = 'active';
+      } else {
+        status = 'unconfigured';
+      }
+
       return {
         ...updated,
+        isActive,
+        status,
+        hasSubscription: hasSub,
         isBudgetOver,
         isDayUsageOver,
         lastUpdated: new Date().toISOString()
@@ -69,6 +168,138 @@ export const AdminKeysAndBudgetsPortal: React.FC<AdminKeysAndBudgetsPortalProps>
     }));
   };
 
+  // Test / Verify single key live
+  const handleTestKey = async (k: AdminKeyConfig) => {
+    setTestingKeyId(k.id);
+    setTestResults(prev => ({ ...prev, [k.id]: undefined as any }));
+
+    const userEmail = auth.currentUser?.email || 'solarastra.in@gmail.com';
+    const isSubscription = k.authMethod === 'subscription' || (k.hasSubscription && !k.apiKey);
+
+    try {
+      const res = await authedFetch('/api/credentials/verify', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-email': userEmail,
+          'x-auth-method': 'google'
+        },
+        body: JSON.stringify({
+          provider: k.provider === 'gemini' ? 'google' : k.provider,
+          apiKey: k.apiKey?.trim(),
+          baseUrl: k.baseUrl,
+          organizationId: k.organizationId,
+          projectId: k.projectId,
+          verifyMethod: isSubscription ? 'subscription' : 'api_key',
+          userEmail
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setTestResults(prev => ({
+          ...prev,
+          [k.id]: {
+            success: true,
+            message: data.message || `Connection verified successfully (${data.latencyMs || 120}ms latency).`,
+            latencyMs: data.latencyMs,
+            detectedModels: data.detectedModels || []
+          }
+        }));
+
+        // Automatically activate key if it tested successfully
+        handleUpdateKey(k.id, {
+          status: 'active',
+          isActive: true,
+          latencyMs: data.latencyMs,
+          detectedModels: data.detectedModels,
+          lastVerifiedAt: new Date().toISOString()
+        });
+      } else {
+        setTestResults(prev => ({
+          ...prev,
+          [k.id]: {
+            success: false,
+            message: data.error || 'Failed to authenticate with provider. Please verify credentials.'
+          }
+        }));
+      }
+    } catch (err: any) {
+      setTestResults(prev => ({
+        ...prev,
+        [k.id]: {
+          success: false,
+          message: err?.message || 'Network error testing credentials.'
+        }
+      }));
+    } finally {
+      setTestingKeyId(null);
+    }
+  };
+
+  // Save single key to Firestore and server credentials vault
+  const handleSaveSingleKey = async (k: AdminKeyConfig) => {
+    setSavingKeyId(k.id);
+    try {
+      await saveAdminKeyConfigToFirestore(k);
+
+      // Also sync to server-side credentials vault if API key is provided
+      const userEmail = auth.currentUser?.email || 'solarastra.in@gmail.com';
+      if (k.apiKey?.trim()) {
+        try {
+          await authedFetch('/api/credentials/save', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-user-email': userEmail,
+              'x-auth-method': 'google'
+            },
+            body: JSON.stringify({
+              provider: k.provider === 'gemini' ? 'google' : k.provider,
+              apiKey: k.apiKey.trim(),
+              baseUrl: k.baseUrl,
+              organizationId: k.organizationId,
+              projectId: k.projectId,
+              authMethod: 'api_key',
+              monthlySpendLimitUsd: k.monthlyBudgetLimit,
+              userEmail
+            })
+          });
+        } catch (syncErr) {
+          console.warn('Server credentials vault sync notice:', syncErr);
+        }
+      }
+
+      const adminEmail = auth.currentUser?.email || 'Admin Superuser';
+      await recordAuditLogToFirestore(
+        `Updated ${k.providerDisplayName || k.providerName} Key Config`,
+        'key_management',
+        adminEmail,
+        `Updated credentials & budget limit ($${k.monthlyBudgetLimit}) for ${k.providerName}.`
+      );
+
+      setStatusMessage({
+        type: 'success',
+        text: `Configuration for ${k.providerDisplayName || k.providerName} saved successfully.`
+      });
+
+      if (onNotifyStatus) {
+        onNotifyStatus({
+          type: 'success',
+          text: `Saved ${k.providerDisplayName || k.providerName} configuration.`
+        });
+      }
+    } catch (err: any) {
+      setStatusMessage({
+        type: 'error',
+        text: `Failed to save ${k.providerName}: ${err.message}`
+      });
+    } finally {
+      setSavingKeyId(null);
+    }
+  };
+
+  // Save all keys
   const handleSaveAllKeys = async () => {
     setIsSaving(true);
     setStatusMessage(null);
@@ -80,7 +311,7 @@ export const AdminKeysAndBudgetsPortal: React.FC<AdminKeysAndBudgetsPortalProps>
       
       const adminEmail = auth.currentUser?.email || 'Admin Superuser';
       await recordAuditLogToFirestore(
-        'Updated AI Engine Keys & Budgets',
+        'Updated All AI Engine Keys & Budgets',
         'key_management',
         adminEmail,
         `Updated credentials, monthly budgets and daily usage caps for ${keys.length} AI providers.`
@@ -88,7 +319,7 @@ export const AdminKeysAndBudgetsPortal: React.FC<AdminKeysAndBudgetsPortalProps>
 
       setStatusMessage({
         type: 'success',
-        text: 'All AI engine API keys, monthly budget caps, and daily rate limits saved to Firestore successfully.'
+        text: 'All AI engine API keys, subscription statuses, monthly budget caps, and daily rate limits saved to Firestore successfully.'
       });
       if (onNotifyStatus) {
         onNotifyStatus({
@@ -106,48 +337,352 @@ export const AdminKeysAndBudgetsPortal: React.FC<AdminKeysAndBudgetsPortalProps>
     }
   };
 
+  // Open Subscription Enrollment Modal
+  const handleOpenEnrollModal = (k: AdminKeyConfig) => {
+    const providerKey = k.provider === 'gemini' ? 'google' : k.provider;
+    const defaultTiers = SUBSCRIPTION_TIER_OPTIONS[providerKey] || [];
+    setEnrollTier(k.subscriptionTier || defaultTiers[0]?.tierName || 'Enterprise Subscription');
+    setEnrollEmail(k.subscriptionEmail || auth.currentUser?.email || 'solarastra.in@gmail.com');
+    setEnrollAuthType('session_token');
+    setEnrollSessionToken('');
+    setEnrollProxyUrl(k.localProxyUrl || 'http://localhost:8080/v1');
+    setEnrollError(null);
+    setEnrollModalConfig({
+      isOpen: true,
+      provider: providerKey,
+      providerName: k.providerDisplayName || k.providerName,
+      keyId: k.id,
+      currentTier: k.subscriptionTier,
+      currentEmail: k.subscriptionEmail
+    });
+  };
+
+  // Submit Subscription Enrollment
+  const handleSubmitEnrollment = async () => {
+    if (!enrollModalConfig) return;
+    setIsEnrolling(true);
+    setEnrollError(null);
+
+    const provider = enrollModalConfig.provider;
+    const keyId = enrollModalConfig.keyId;
+    const userEmail = auth.currentUser?.email || 'solarastra.in@gmail.com';
+
+    try {
+      const res = await authedFetch('/api/credentials/subscription/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-email': userEmail,
+          'x-auth-method': 'google'
+        },
+        body: JSON.stringify({
+          provider,
+          email: enrollEmail.trim() || userEmail,
+          oauthType: enrollAuthType,
+          subscriptionTier: enrollTier,
+          sessionToken: enrollSessionToken.trim(),
+          localProxyUrl: enrollAuthType === 'local_proxy' ? enrollProxyUrl.trim() : undefined,
+          userEmail
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        // Update local state and Firestore
+        const maskedToken = enrollSessionToken ? `${enrollSessionToken.slice(0, 6)}...${enrollSessionToken.slice(-4)}` : `auth_${Date.now().toString(36)}`;
+        
+        handleUpdateKey(keyId, {
+          authMethod: 'subscription',
+          hasSubscription: true,
+          subscriptionTier: enrollTier,
+          subscriptionEmail: enrollEmail.trim() || userEmail,
+          sessionTokenMasked: maskedToken,
+          localProxyUrl: enrollAuthType === 'local_proxy' ? enrollProxyUrl : undefined,
+          isActive: true,
+          status: 'active',
+          lastVerifiedAt: new Date().toISOString()
+        });
+
+        // Persist to credential store
+        await saveCredentialToFirestore(provider as any, {
+          provider: provider as any,
+          authMethod: 'subscription_oauth',
+          hasSubscription: true,
+          subscriptionTier: enrollTier,
+          subscriptionEmail: enrollEmail.trim() || userEmail,
+          sessionTokenMasked: maskedToken,
+          status: 'connected',
+          updatedAt: new Date().toISOString()
+        });
+
+        // Save admin key config to Firestore
+        const targetKey = keys.find(k => k.id === keyId);
+        if (targetKey) {
+          await saveAdminKeyConfigToFirestore({
+            ...targetKey,
+            authMethod: 'subscription',
+            hasSubscription: true,
+            subscriptionTier: enrollTier,
+            subscriptionEmail: enrollEmail.trim() || userEmail,
+            sessionTokenMasked: maskedToken,
+            localProxyUrl: enrollAuthType === 'local_proxy' ? enrollProxyUrl : undefined,
+            isActive: true,
+            status: 'active',
+            lastVerifiedAt: new Date().toISOString()
+          });
+        }
+
+        const adminEmail = auth.currentUser?.email || 'Admin Superuser';
+        await recordAuditLogToFirestore(
+          `Enrolled AI Subscription for ${enrollModalConfig.providerName}`,
+          'subscription_management',
+          adminEmail,
+          `Enrolled subscription: ${enrollTier} for account ${enrollEmail}.`
+        );
+
+        setStatusMessage({
+          type: 'success',
+          text: `Enrolled ${enrollModalConfig.providerName} subscription (${enrollTier}) successfully!`
+        });
+
+        setEnrollModalConfig(null);
+      } else {
+        setEnrollError(data.error || 'Failed to enroll subscription. Please verify session credentials.');
+      }
+    } catch (err: any) {
+      setEnrollError(err.message || 'Network error communicating with subscription server.');
+    } finally {
+      setIsEnrolling(false);
+    }
+  };
+
+  // Disconnect subscription
+  const handleDisconnectSubscription = async (k: AdminKeyConfig) => {
+    const userEmail = auth.currentUser?.email || 'solarastra.in@gmail.com';
+    const provider = k.provider === 'gemini' ? 'google' : k.provider;
+
+    try {
+      await authedFetch('/api/credentials/subscription/disconnect', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-email': userEmail,
+          'x-auth-method': 'google'
+        },
+        body: JSON.stringify({ provider, userEmail })
+      });
+
+      const updatedKey: Partial<AdminKeyConfig> = {
+        hasSubscription: false,
+        subscriptionTier: undefined,
+        subscriptionEmail: undefined,
+        sessionTokenMasked: undefined,
+        localProxyUrl: undefined,
+        authMethod: k.apiKey ? 'api_key' : undefined,
+        status: k.apiKey ? 'active' : 'unconfigured',
+        isActive: Boolean(k.apiKey)
+      };
+
+      handleUpdateKey(k.id, updatedKey);
+
+      await saveAdminKeyConfigToFirestore({
+        ...k,
+        ...updatedKey
+      } as AdminKeyConfig);
+
+      setStatusMessage({
+        type: 'info',
+        text: `Unlinked subscription for ${k.providerDisplayName || k.providerName}.`
+      });
+    } catch (err: any) {
+      console.warn('Error disconnecting subscription:', err);
+    }
+  };
+
   const toggleVisibility = (id: string) => {
     setVisibleKeyIds(prev => ({ ...prev, [id]: !prev[id] }));
   };
 
-  // Find any keys with overages
+  // Aggregate stats
+  const totalConfigured = keys.filter(k => Boolean((k.apiKey && k.apiKey.trim().length > 0) || (k.hasSubscription && (k.subscriptionTier || k.sessionTokenMasked || k.subscriptionEmail)))).length;
+  const totalSubscriptions = keys.filter(k => Boolean(k.hasSubscription && (k.subscriptionTier || k.sessionTokenMasked || k.subscriptionEmail))).length;
+  const totalBudget = keys.reduce((acc, k) => acc + (k.monthlyBudgetLimit || 0), 0);
+  const totalSpend = keys.reduce((acc, k) => acc + (k.currentSpend || 0), 0);
+
+  // Filtered keys
+  const filteredKeys = keys.filter(k => {
+    const matchesSearch = 
+      k.providerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      k.provider.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      k.modelFamily.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (k.subscriptionTier && k.subscriptionTier.toLowerCase().includes(searchQuery.toLowerCase()));
+
+    const isConfigured = Boolean((k.apiKey && k.apiKey.trim().length > 0) || (k.hasSubscription && (k.subscriptionTier || k.sessionTokenMasked || k.subscriptionEmail)));
+    const isOverage = k.isBudgetOver || k.isDayUsageOver;
+
+    if (statusFilter === 'configured') return matchesSearch && isConfigured;
+    if (statusFilter === 'unconfigured') return matchesSearch && !isConfigured;
+    if (statusFilter === 'overage') return matchesSearch && isOverage;
+    return matchesSearch;
+  });
+
   const overBudgetKeys = keys.filter(k => k.isBudgetOver);
   const overDayUsageKeys = keys.filter(k => k.isDayUsageOver);
   const hasAnyOverages = overBudgetKeys.length > 0 || overDayUsageKeys.length > 0;
 
+  // Quick enroll first unconfigured or selected provider
+  const handleQuickEnrollAny = () => {
+    const target = keys.find(k => !k.hasSubscription) || keys[0];
+    if (target) {
+      handleOpenEnrollModal(target);
+    }
+  };
+
   return (
-    <div className="space-y-6 animate-in fade-in">
+    <div className="space-y-6 animate-in fade-in pb-12">
       
       {/* HEADER */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-slate-900/60 border border-white/10 rounded-2xl p-5 backdrop-blur-xl">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <KeyRound className="w-5 h-5 text-orange-400" />
-            <h2 className="text-lg font-bold font-display text-white">AI Engine Keys & Budget Limits Portal</h2>
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-gradient-to-r from-slate-900/90 via-slate-900/95 to-slate-900/90 border border-white/10 rounded-2xl p-6 backdrop-blur-xl shadow-xl">
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-orange-500/10 border border-orange-500/30 flex items-center justify-center">
+              <KeyRound className="w-5 h-5 text-orange-400" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold font-display text-white flex items-center gap-2">
+                AI Engine Keys & Budget Limits Portal
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-orange-500/20 text-orange-300 border border-orange-500/30">
+                  Enterprise Vault
+                </span>
+              </h2>
+              <p className="text-xs text-slate-400">
+                Configure direct BYOK secret keys, enroll AI engine subscriptions (ChatGPT Plus/Pro, Claude Pro, Gemini Advanced), and enforce monthly budgets.
+              </p>
+            </div>
           </div>
-          <p className="text-xs text-slate-400">
-            Configure enterprise and admin subscription pool keys with monthly spending limits and daily usage guardrails.
-          </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            onClick={handleQuickEnrollAny}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-bold font-mono shadow-md shadow-purple-600/20 transition-all cursor-pointer"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-purple-200" />
+            <span>+ Enroll AI Subscription</span>
+          </button>
+
           <button
             onClick={fetchKeys}
             disabled={isLoading}
             className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-mono text-slate-200 border border-white/10 transition-colors cursor-pointer"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin text-orange-400' : ''}`} />
-            <span>Refresh</span>
+            <span>Refresh Vault</span>
           </button>
 
           <button
             onClick={handleSaveAllKeys}
             disabled={isSaving}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-slate-950 font-bold text-xs shadow-lg transition-all cursor-pointer disabled:opacity-50"
+            className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-slate-950 font-bold text-xs shadow-lg shadow-orange-500/20 transition-all cursor-pointer disabled:opacity-50"
           >
             <Save className="w-3.5 h-3.5" />
             <span>{isSaving ? 'Saving to Firestore...' : 'Save All Keys & Budgets'}</span>
           </button>
+        </div>
+      </div>
+
+      {/* STATS OVERVIEW BAR */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <div className="p-4 rounded-2xl bg-slate-900/60 border border-white/10 backdrop-blur-xl">
+          <div className="text-[11px] font-mono text-slate-400">Active Engines</div>
+          <div className="text-xl font-bold text-white font-mono mt-1">
+            {totalConfigured} <span className="text-xs font-normal text-slate-500">/ {keys.length}</span>
+          </div>
+          <div className="text-[10px] text-emerald-400 font-mono mt-0.5">
+            {totalConfigured === 0 ? 'No keys configured' : `${totalConfigured} models ready in pool`}
+          </div>
+        </div>
+
+        <div className="p-4 rounded-2xl bg-slate-900/60 border border-white/10 backdrop-blur-xl">
+          <div className="text-[11px] font-mono text-purple-400">Enrolled Subscriptions</div>
+          <div className="text-xl font-bold text-purple-300 font-mono mt-1">
+            {totalSubscriptions} <span className="text-xs font-normal text-purple-400/60">Linked</span>
+          </div>
+          <div className="text-[10px] text-purple-400 font-mono mt-0.5">
+            ChatGPT / Claude / Gemini
+          </div>
+        </div>
+
+        <div className="p-4 rounded-2xl bg-slate-900/60 border border-white/10 backdrop-blur-xl">
+          <div className="text-[11px] font-mono text-slate-400">Total Monthly Budget</div>
+          <div className="text-xl font-bold text-white font-mono mt-1">
+            ${totalBudget.toLocaleString()}
+          </div>
+          <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+            Current Spend: ${totalSpend.toFixed(2)}
+          </div>
+        </div>
+
+        <div className="p-4 rounded-2xl bg-slate-900/60 border border-white/10 backdrop-blur-xl">
+          <div className="text-[11px] font-mono text-slate-400">Dispatch Health</div>
+          <div className="text-xl font-bold text-emerald-400 font-mono mt-1 flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+            {hasAnyOverages ? 'Spend Warning' : totalConfigured > 0 ? 'Ready & Active' : 'Setup Required'}
+          </div>
+          <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+            Thompson Pareto Router
+          </div>
+        </div>
+      </div>
+
+      {/* FILTER & SEARCH BAR */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-slate-900/40 border border-white/10 rounded-xl p-3 backdrop-blur-md">
+        <div className="relative flex-1">
+          <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+          <input
+            type="text"
+            placeholder="Search AI engines, models (e.g. Gemini 3.7, Claude 3.7, GPT-4o, DeepSeek R1)..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full pl-9 pr-4 py-1.5 rounded-lg bg-slate-950/70 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-orange-500 font-mono"
+          />
+        </div>
+
+        <div className="flex items-center gap-1.5 bg-slate-950/80 border border-white/10 rounded-lg p-1 text-xs">
+          <button
+            onClick={() => setStatusFilter('all')}
+            className={`px-2.5 py-1 rounded-md text-xs font-mono transition-colors ${
+              statusFilter === 'all' ? 'bg-orange-500 text-slate-950 font-bold' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            All ({keys.length})
+          </button>
+          <button
+            onClick={() => setStatusFilter('configured')}
+            className={`px-2.5 py-1 rounded-md text-xs font-mono transition-colors ${
+              statusFilter === 'configured' ? 'bg-emerald-500 text-slate-950 font-bold' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            Configured ({totalConfigured})
+          </button>
+          <button
+            onClick={() => setStatusFilter('unconfigured')}
+            className={`px-2.5 py-1 rounded-md text-xs font-mono transition-colors ${
+              statusFilter === 'unconfigured' ? 'bg-slate-700 text-white font-bold' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            Needs Setup ({keys.length - totalConfigured})
+          </button>
+          {hasAnyOverages && (
+            <button
+              onClick={() => setStatusFilter('overage')}
+              className={`px-2.5 py-1 rounded-md text-xs font-mono transition-colors ${
+                statusFilter === 'overage' ? 'bg-red-500 text-white font-bold' : 'text-red-400 hover:text-red-300'
+              }`}
+            >
+              Overages ({overBudgetKeys.length + overDayUsageKeys.length})
+            </button>
+          )}
         </div>
       </div>
 
@@ -177,22 +712,37 @@ export const AdminKeysAndBudgetsPortal: React.FC<AdminKeysAndBudgetsPortalProps>
 
       {/* STATUS NOTIFICATION */}
       {statusMessage && (
-        <div className={`p-4 rounded-xl border text-xs flex items-center gap-2 ${
+        <div className={`p-4 rounded-xl border text-xs flex items-center justify-between gap-2 animate-in fade-in ${
           statusMessage.type === 'success' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' :
           statusMessage.type === 'error' ? 'bg-red-500/10 border-red-500/30 text-red-300' :
           'bg-cyan-500/10 border-cyan-500/30 text-cyan-300'
         }`}>
-          {statusMessage.type === 'success' ? <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /> : <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />}
-          <span>{statusMessage.text}</span>
+          <div className="flex items-center gap-2">
+            {statusMessage.type === 'success' ? <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /> : <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />}
+            <span>{statusMessage.text}</span>
+          </div>
+          <button onClick={() => setStatusMessage(null)} className="text-slate-400 hover:text-white">
+            <X className="w-3.5 h-3.5" />
+          </button>
         </div>
       )}
 
       {/* KEY CONFIGURATION CARDS GRID */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {keys.map((k) => {
+        {filteredKeys.map((k) => {
           const isVisible = visibleKeyIds[k.id] || false;
+          const hasKey = Boolean(k.apiKey && k.apiKey.trim().length > 0);
+          const hasSub = Boolean(k.hasSubscription && (k.subscriptionTier || k.sessionTokenMasked || k.subscriptionEmail));
+          const isConfigured = hasKey || hasSub;
+          
           const budgetPct = k.monthlyBudgetLimit > 0 ? Math.min(100, Math.round((k.currentSpend / k.monthlyBudgetLimit) * 100)) : 0;
           const dailyPct = k.dailyUsageLimit > 0 ? Math.min(100, Math.round((k.todaySpend / k.dailyUsageLimit) * 100)) : 0;
+
+          const isTestingThis = testingKeyId === k.id;
+          const isSavingThis = savingKeyId === k.id;
+          const testResult = testResults[k.id];
+
+          const currentAuthMode = k.authMethod || (hasSub ? 'subscription' : 'api_key');
 
           return (
             <div 
@@ -202,66 +752,320 @@ export const AdminKeysAndBudgetsPortal: React.FC<AdminKeysAndBudgetsPortalProps>
                   ? 'bg-red-950/20 border-red-500/60 shadow-lg shadow-red-500/10' 
                   : k.isDayUsageOver
                   ? 'bg-amber-950/20 border-amber-500/60 shadow-lg shadow-amber-500/10'
-                  : 'bg-slate-900/70 border-white/10 hover:border-white/20 shadow-xl'
+                  : isConfigured && k.isActive
+                  ? 'bg-slate-900/80 border-emerald-500/30 hover:border-emerald-500/50 shadow-xl'
+                  : 'bg-slate-900/60 border-white/10 hover:border-white/20 shadow-lg'
               }`}
             >
               
               {/* Card Header */}
-              <div className="flex items-start justify-between gap-4">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
-                    <h3 className="text-base font-bold text-white">{k.providerName}</h3>
+                    <h3 className="text-base font-bold text-white font-display">{k.providerDisplayName || k.providerName}</h3>
                     <span className="text-[10px] font-mono uppercase bg-slate-800 text-slate-300 px-2 py-0.5 rounded-md border border-white/10">
                       {k.modelFamily}
                     </span>
                   </div>
                   <p className="text-[11px] text-slate-400">
-                    Primary Engine for {k.modelFamily} requests & Pareto sampling
+                    {k.notes || `Primary Engine for ${k.modelFamily} requests & Pareto sampling`}
                   </p>
                 </div>
 
-                {/* Status Badges */}
-                <div className="flex flex-col items-end gap-1.5">
-                  {k.isBudgetOver && (
+                {/* Status Badges & Quick Action */}
+                <div className="flex flex-wrap items-center gap-2">
+                  {hasSub ? (
+                    <button
+                      type="button"
+                      onClick={() => handleOpenEnrollModal(k)}
+                      className="px-2.5 py-1 rounded-xl text-[11px] font-mono bg-purple-500/20 text-purple-300 hover:bg-purple-500/30 border border-purple-500/40 flex items-center gap-1 transition-all cursor-pointer"
+                    >
+                      <Sparkles className="w-3 h-3 text-purple-400" />
+                      <span>Manage Sub</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleUpdateKey(k.id, { authMethod: 'subscription' });
+                        handleOpenEnrollModal(k);
+                      }}
+                      className="px-2.5 py-1 rounded-xl text-[11px] font-mono font-bold bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white flex items-center gap-1 shadow-md shadow-purple-600/20 transition-all cursor-pointer"
+                    >
+                      <Sparkles className="w-3 h-3 text-purple-300" />
+                      <span>+ Enroll Sub</span>
+                    </button>
+                  )}
+
+                  {!isConfigured && (
+                    <span className="px-2.5 py-1 rounded-full text-[10px] font-mono font-bold bg-slate-800/90 text-amber-300 border border-amber-500/40 uppercase flex items-center gap-1.5">
+                      <AlertCircle className="w-3 h-3 text-amber-400" />
+                      Unconfigured
+                    </span>
+                  )}
+
+                  {isConfigured && !k.isActive && (
+                    <span className="px-2.5 py-1 rounded-full text-[10px] font-mono font-bold bg-slate-800 text-slate-400 border border-slate-700 uppercase">
+                      Disabled
+                    </span>
+                  )}
+
+                  {isConfigured && k.isActive && k.isBudgetOver && (
                     <span className="px-2.5 py-1 rounded-full text-[10px] font-mono font-bold bg-red-500/20 text-red-300 border border-red-500/50 uppercase animate-pulse">
-                      Over Budget Limit
+                      Budget Exceeded
                     </span>
                   )}
-                  {k.isDayUsageOver && !k.isBudgetOver && (
+
+                  {isConfigured && k.isActive && k.isDayUsageOver && !k.isBudgetOver && (
                     <span className="px-2.5 py-1 rounded-full text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/50 uppercase">
-                      Over Daily Limit
+                      Day Limit Exceeded
                     </span>
                   )}
-                  {!k.isBudgetOver && !k.isDayUsageOver && (
-                    <span className="px-2.5 py-1 rounded-full text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 uppercase flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                      Active & Within Limits
-                    </span>
+
+                  {isConfigured && k.isActive && !k.isBudgetOver && !k.isDayUsageOver && (
+                    hasSub ? (
+                      <span className="px-2.5 py-1 rounded-full text-[10px] font-mono font-bold bg-purple-500/20 text-purple-300 border border-purple-500/40 uppercase flex items-center gap-1.5 shadow-sm">
+                        <Sparkles className="w-3 h-3 text-purple-400" />
+                        Subscription Active
+                      </span>
+                    ) : (
+                      <span className="px-2.5 py-1 rounded-full text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 uppercase flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                        Configured (API Key)
+                      </span>
+                    )
                   )}
                 </div>
               </div>
 
-              {/* API Key Input */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-mono text-slate-300 font-semibold flex items-center justify-between">
-                  <span>API Secret Key ({k.envVarName})</span>
-                  <button
-                    type="button"
-                    onClick={() => toggleVisibility(k.id)}
-                    className="text-[11px] text-cyan-400 hover:text-cyan-300 flex items-center gap-1 cursor-pointer font-mono"
-                  >
-                    {isVisible ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                    <span>{isVisible ? 'Hide' : 'Reveal'}</span>
-                  </button>
-                </label>
-                <input
-                  type={isVisible ? 'text' : 'password'}
-                  placeholder={`Enter ${k.providerName} API Key (e.g. sk-...)`}
-                  value={k.apiKey}
-                  onChange={(e) => handleUpdateKey(k.id, { apiKey: e.target.value })}
-                  className="w-full rounded-xl bg-slate-950/80 border border-white/15 px-4 py-2.5 text-xs text-white font-mono placeholder-slate-500 focus:outline-none focus:border-orange-500 transition-colors"
-                />
+              {/* AUTH MODE TOGGLE TABS */}
+              <div className="flex items-center bg-slate-950/80 border border-white/10 rounded-xl p-1 text-xs">
+                <button
+                  type="button"
+                  onClick={() => handleUpdateKey(k.id, { authMethod: 'api_key' })}
+                  className={`flex-1 py-1.5 rounded-lg text-xs font-mono font-medium transition-all flex items-center justify-center gap-1.5 ${
+                    currentAuthMode === 'api_key'
+                      ? 'bg-orange-500 text-slate-950 font-bold shadow'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <KeyRound className="w-3.5 h-3.5" />
+                  <span>Direct API Key (BYOK)</span>
+                  {hasKey && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleUpdateKey(k.id, { authMethod: 'subscription' })}
+                  className={`flex-1 py-1.5 rounded-lg text-xs font-mono font-medium transition-all flex items-center justify-center gap-1.5 ${
+                    currentAuthMode === 'subscription'
+                      ? 'bg-purple-600 text-white font-bold shadow'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>Subscription Relay</span>
+                  {hasSub && <span className="w-1.5 h-1.5 rounded-full bg-purple-400" />}
+                </button>
               </div>
+
+              {/* DIRECT API KEY VIEW */}
+              {currentAuthMode === 'api_key' && (
+                <div className="space-y-3">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-mono text-slate-300 font-semibold flex items-center justify-between">
+                      <span>API Secret Key ({k.envVarName})</span>
+                      <button
+                        type="button"
+                        onClick={() => toggleVisibility(k.id)}
+                        className="text-[11px] text-cyan-400 hover:text-cyan-300 flex items-center gap-1 cursor-pointer font-mono"
+                      >
+                        {isVisible ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                        <span>{isVisible ? 'Hide' : 'Reveal'}</span>
+                      </button>
+                    </label>
+                    <input
+                      type={isVisible ? 'text' : 'password'}
+                      placeholder={`Enter ${k.providerName} API Key (e.g. sk-...)`}
+                      value={k.apiKey || ''}
+                      onChange={(e) => handleUpdateKey(k.id, { apiKey: e.target.value })}
+                      className="w-full rounded-xl bg-slate-950/80 border border-white/15 px-4 py-2.5 text-xs text-white font-mono placeholder-slate-600 focus:outline-none focus:border-orange-500 transition-colors"
+                    />
+                  </div>
+
+                  {/* PROMINENT SUBSCRIPTION ENROLLMENT HELPER */}
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 p-2.5 px-3 rounded-xl bg-purple-950/20 border border-purple-500/20 text-[11px]">
+                    <div className="text-purple-200/90 flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                      <span>Prefer flat-rate billing without per-token charges?</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleUpdateKey(k.id, { authMethod: 'subscription' });
+                        handleOpenEnrollModal(k);
+                      }}
+                      className="text-purple-300 hover:text-white font-bold font-mono underline flex items-center gap-1 cursor-pointer"
+                    >
+                      <span>Enroll {k.providerDisplayName || k.providerName} Subscription &rarr;</span>
+                    </button>
+                  </div>
+
+                  {/* Optional Base URL / Org Config */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                    <div>
+                      <label className="text-[10px] font-mono text-slate-400 block mb-1">Custom Base URL (Optional)</label>
+                      <input
+                        type="text"
+                        placeholder="https://api.example.com/v1"
+                        value={k.baseUrl || ''}
+                        onChange={(e) => handleUpdateKey(k.id, { baseUrl: e.target.value })}
+                        className="w-full rounded-lg bg-slate-950/60 border border-white/10 px-3 py-1.5 text-xs text-white font-mono placeholder-slate-600 focus:outline-none focus:border-orange-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-mono text-slate-400 block mb-1">Organization / Project ID (Optional)</label>
+                      <input
+                        type="text"
+                        placeholder="org-... or proj-..."
+                        value={k.organizationId || k.projectId || ''}
+                        onChange={(e) => handleUpdateKey(k.id, { organizationId: e.target.value, projectId: e.target.value })}
+                        className="w-full rounded-lg bg-slate-950/60 border border-white/10 px-3 py-1.5 text-xs text-white font-mono placeholder-slate-600 focus:outline-none focus:border-orange-500"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Test Connection Button */}
+                  <div className="flex items-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => handleTestKey(k)}
+                      disabled={isTestingThis || (!k.apiKey && k.provider !== 'google')}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-mono text-cyan-300 border border-cyan-500/30 transition-colors cursor-pointer disabled:opacity-40"
+                    >
+                      <Zap className={`w-3.5 h-3.5 ${isTestingThis ? 'animate-spin text-orange-400' : ''}`} />
+                      <span>{isTestingThis ? 'Testing Key Live...' : 'Verify Key Connection Live'}</span>
+                    </button>
+                    {!k.apiKey && k.provider !== 'google' && (
+                      <span className="text-[10px] text-slate-500 font-mono">Enter key above to test</span>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* SUBSCRIPTION RELAY VIEW */}
+              {currentAuthMode === 'subscription' && (
+                <div className="p-4 rounded-2xl bg-purple-950/20 border border-purple-500/30 space-y-3">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <div className="text-xs font-bold text-purple-300 font-display flex items-center gap-1.5">
+                        <Sparkles className="w-4 h-4 text-purple-400" />
+                        AI Engine Subscription Pool
+                      </div>
+                      <p className="text-[11px] text-purple-200/70 mt-0.5">
+                        Connect ChatGPT Plus/Pro, Claude Pro, or Gemini Advanced to bypass per-token charges.
+                      </p>
+                    </div>
+
+                    {hasSub && (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-purple-500/20 text-purple-300 border border-purple-400/40">
+                        Connected
+                      </span>
+                    )}
+                  </div>
+
+                  {hasSub ? (
+                    <div className="space-y-2 bg-slate-950/70 p-3.5 rounded-xl border border-purple-500/20 text-xs font-mono">
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400">Plan Tier:</span>
+                        <span className="text-purple-300 font-bold">{k.subscriptionTier || 'Active Subscription'}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400">Account Email:</span>
+                        <span className="text-white">{k.subscriptionEmail || 'admin@domain.com'}</span>
+                      </div>
+                      {k.sessionTokenMasked && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-400">Session Token:</span>
+                          <span className="text-slate-300">{k.sessionTokenMasked}</span>
+                        </div>
+                      )}
+                      {k.localProxyUrl && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-400">Local Proxy:</span>
+                          <span className="text-cyan-300">{k.localProxyUrl}</span>
+                        </div>
+                      )}
+
+                      <div className="pt-2 flex items-center justify-between border-t border-white/5">
+                        <button
+                          type="button"
+                          onClick={() => handleTestKey(k)}
+                          disabled={isTestingThis}
+                          className="text-[11px] text-cyan-400 hover:text-cyan-300 flex items-center gap-1 cursor-pointer"
+                        >
+                          <Zap className="w-3 h-3" />
+                          <span>{isTestingThis ? 'Testing...' : 'Test Connection'}</span>
+                        </button>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEnrollModal(k)}
+                            className="text-[11px] text-purple-300 hover:text-purple-200 cursor-pointer"
+                          >
+                            Reconfigure
+                          </button>
+                          <span className="text-slate-600">•</span>
+                          <button
+                            type="button"
+                            onClick={() => handleDisconnectSubscription(k)}
+                            className="text-[11px] text-red-400 hover:text-red-300 cursor-pointer"
+                          >
+                            Disconnect
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="bg-slate-950/60 p-4 rounded-xl border border-white/5 space-y-3 text-center sm:text-left">
+                      <div className="text-xs text-slate-300">
+                        No active subscription linked for {k.providerName}. Link your account or session token to enable multi-tenant subscription routing.
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenEnrollModal(k)}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs shadow-md shadow-purple-600/30 transition-all cursor-pointer"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>Enroll {k.providerDisplayName || k.providerName} Subscription</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* TEST RESULT FEEDBACK */}
+              {testResult && (
+                <div className={`p-3 rounded-xl border text-xs flex items-start gap-2 animate-in fade-in ${
+                  testResult.success ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' : 'bg-red-500/10 border-red-500/30 text-red-300'
+                }`}>
+                  {testResult.success ? <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" /> : <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />}
+                  <div className="space-y-1">
+                    <div>{testResult.message}</div>
+                    {testResult.detectedModels && testResult.detectedModels.length > 0 && (
+                      <div className="text-[10px] text-slate-400 font-mono flex flex-wrap gap-1 pt-1">
+                        <span className="text-slate-300">Models Available:</span>
+                        {testResult.detectedModels.slice(0, 4).map(m => (
+                          <span key={m} className="px-1.5 py-0.2 rounded bg-slate-900 border border-white/10 text-slate-200">
+                            {m}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* Budget & Daily Usage Controls */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
@@ -324,8 +1128,8 @@ export const AdminKeysAndBudgetsPortal: React.FC<AdminKeysAndBudgetsPortalProps>
 
               </div>
 
-              {/* Footer Toggle */}
-              <div className="pt-2 border-t border-white/5 flex items-center justify-between text-xs">
+              {/* Footer Toggle & Individual Save */}
+              <div className="pt-2 border-t border-white/5 flex items-center justify-between gap-4 text-xs">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
@@ -336,15 +1140,212 @@ export const AdminKeysAndBudgetsPortal: React.FC<AdminKeysAndBudgetsPortalProps>
                   <span className="text-slate-300">Enable in Auto-Dispatch Pool</span>
                 </label>
 
-                <span className="text-[10px] text-slate-500 font-mono">
-                  Updated: {new Date(k.lastUpdated).toLocaleDateString()}
-                </span>
+                <div className="flex items-center gap-3">
+                  <span className="text-[10px] text-slate-500 font-mono hidden sm:inline">
+                    Updated: {new Date(k.lastUpdated).toLocaleDateString()}
+                  </span>
+                  
+                  <button
+                    type="button"
+                    onClick={() => handleSaveSingleKey(k)}
+                    disabled={isSavingThis}
+                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 text-xs font-mono transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    <Save className="w-3 h-3 text-orange-400" />
+                    <span>{isSavingThis ? 'Saving...' : 'Save Engine'}</span>
+                  </button>
+                </div>
               </div>
 
             </div>
           );
         })}
       </div>
+
+      {/* SUBSCRIPTION ENROLLMENT MODAL */}
+      {enrollModalConfig && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in">
+          <div className="bg-slate-900 border border-purple-500/40 rounded-3xl p-6 sm:p-8 max-w-xl w-full shadow-2xl space-y-6 max-h-[90vh] overflow-y-auto">
+            
+            <div className="flex items-start justify-between gap-4 border-b border-white/10 pb-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-5 h-5 text-purple-400" />
+                  <h3 className="text-lg font-bold text-white font-display">
+                    Enroll {enrollModalConfig.providerName} Subscription
+                  </h3>
+                </div>
+                <p className="text-xs text-slate-400">
+                  Connect your ChatGPT Plus/Pro, Claude Pro/Team, or Gemini Advanced subscription account to enable unlimited team routing without token fees.
+                </p>
+              </div>
+              <button
+                onClick={() => setEnrollModalConfig(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* ERROR BANNER */}
+            {enrollError && (
+              <div className="p-3.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                <span>{enrollError}</span>
+              </div>
+            )}
+
+            {/* FORM */}
+            <div className="space-y-4 text-xs">
+              
+              {/* Subscription Tier Selection */}
+              <div className="space-y-2">
+                <label className="font-mono text-slate-300 font-semibold block">Select Subscription Plan</label>
+                <div className="space-y-2">
+                  {(SUBSCRIPTION_TIER_OPTIONS[enrollModalConfig.provider] || [
+                    { tierName: 'Pro Developer Plan', priceLabel: '$20/mo', description: 'Standard unlimited session bridge', tokenPolicy: 'Flat rate bypass' }
+                  ]).map((tier) => (
+                    <label
+                      key={tier.tierName}
+                      className={`flex items-start gap-3 p-3.5 rounded-2xl border cursor-pointer transition-all ${
+                        enrollTier === tier.tierName
+                          ? 'bg-purple-950/30 border-purple-500 text-white shadow-md'
+                          : 'bg-slate-950/60 border-white/10 text-slate-400 hover:border-white/20'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="enrollTier"
+                        value={tier.tierName}
+                        checked={enrollTier === tier.tierName}
+                        onChange={(e) => setEnrollTier(e.target.value)}
+                        className="mt-0.5 text-purple-600 focus:ring-purple-500"
+                      />
+                      <div className="space-y-0.5 flex-1">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-white text-xs">{tier.tierName}</span>
+                          <span className="font-mono text-purple-300 font-semibold text-[11px]">{tier.priceLabel}</span>
+                        </div>
+                        <p className="text-[11px] text-slate-400">{tier.description}</p>
+                        <p className="text-[10px] text-purple-400 font-mono">{tier.tokenPolicy}</p>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Account Email */}
+              <div className="space-y-1.5">
+                <label className="font-mono text-slate-300 font-semibold block">Subscription Account Email</label>
+                <input
+                  type="email"
+                  value={enrollEmail}
+                  onChange={(e) => setEnrollEmail(e.target.value)}
+                  placeholder="e.g. admin@company.com"
+                  className="w-full rounded-xl bg-slate-950/80 border border-white/15 px-4 py-2.5 text-xs text-white font-mono placeholder-slate-600 focus:outline-none focus:border-purple-500"
+                />
+              </div>
+
+              {/* Auth Method Selector */}
+              <div className="space-y-2">
+                <label className="font-mono text-slate-300 font-semibold block">Authentication Connection Method</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEnrollAuthType('session_token')}
+                    className={`p-3 rounded-xl border text-left font-mono transition-all ${
+                      enrollAuthType === 'session_token'
+                        ? 'bg-purple-950/40 border-purple-500 text-white'
+                        : 'bg-slate-950/50 border-white/10 text-slate-400 hover:border-white/20'
+                    }`}
+                  >
+                    <div className="font-bold text-xs text-white flex items-center gap-1.5">
+                      <Lock className="w-3.5 h-3.5 text-purple-400" />
+                      Web Session Token
+                    </div>
+                    <div className="text-[10px] text-slate-400 mt-1">Browser cookie / auth bearer token</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setEnrollAuthType('local_proxy')}
+                    className={`p-3 rounded-xl border text-left font-mono transition-all ${
+                      enrollAuthType === 'local_proxy'
+                        ? 'bg-purple-950/40 border-purple-500 text-white'
+                        : 'bg-slate-950/50 border-white/10 text-slate-400 hover:border-white/20'
+                    }`}
+                  >
+                    <div className="font-bold text-xs text-white flex items-center gap-1.5">
+                      <Terminal className="w-3.5 h-3.5 text-cyan-400" />
+                      Local Reverse Proxy
+                    </div>
+                    <div className="text-[10px] text-slate-400 mt-1">Self-hosted local relay bridge</div>
+                  </button>
+                </div>
+              </div>
+
+              {/* Session Token Input */}
+              {enrollAuthType === 'session_token' && (
+                <div className="space-y-1.5">
+                  <label className="font-mono text-slate-300 font-semibold block">
+                    Session Auth Token / Cookie Value
+                  </label>
+                  <input
+                    type="password"
+                    value={enrollSessionToken}
+                    onChange={(e) => setEnrollSessionToken(e.target.value)}
+                    placeholder="Enter __Secure-next-auth.session-token or OAuth bearer token"
+                    className="w-full rounded-xl bg-slate-950/80 border border-white/15 px-4 py-2.5 text-xs text-white font-mono placeholder-slate-600 focus:outline-none focus:border-purple-500"
+                  />
+                  <p className="text-[10px] text-slate-500 font-mono">
+                    Token is encrypted in your Firestore vault and used exclusively for server-side dispatch routing.
+                  </p>
+                </div>
+              )}
+
+              {/* Local Proxy URL Input */}
+              {enrollAuthType === 'local_proxy' && (
+                <div className="space-y-1.5">
+                  <label className="font-mono text-slate-300 font-semibold block">Local Reverse Proxy Bridge URL</label>
+                  <input
+                    type="text"
+                    value={enrollProxyUrl}
+                    onChange={(e) => setEnrollProxyUrl(e.target.value)}
+                    placeholder="http://localhost:8080/v1"
+                    className="w-full rounded-xl bg-slate-950/80 border border-white/15 px-4 py-2.5 text-xs text-white font-mono placeholder-slate-600 focus:outline-none focus:border-purple-500"
+                  />
+                  <p className="text-[10px] text-slate-500 font-mono">
+                    Directs Pareto requests to your local tunnel daemon running on your server.
+                  </p>
+                </div>
+              )}
+
+            </div>
+
+            {/* MODAL ACTIONS */}
+            <div className="flex items-center justify-end gap-3 pt-4 border-t border-white/10">
+              <button
+                type="button"
+                onClick={() => setEnrollModalConfig(null)}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-mono text-slate-300 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSubmitEnrollment}
+                disabled={isEnrolling}
+                className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs shadow-lg shadow-purple-600/30 transition-all cursor-pointer disabled:opacity-50"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>{isEnrolling ? 'Verifying & Linking...' : 'Verify & Enroll Subscription'}</span>
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
 
     </div>
   );

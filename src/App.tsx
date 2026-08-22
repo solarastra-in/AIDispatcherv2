@@ -12,6 +12,7 @@ import { SavingsAnalyticsDashboard } from './components/SavingsAnalyticsDashboar
 import { CompanyCredentialsPage } from './components/CompanyCredentialsPage';
 import { ApiExplorerModal } from './components/ApiExplorerModal';
 import { QualityModelInspector } from './components/QualityModelInspector';
+import { QualityInspectorPage } from './pages/QualityInspectorPage';
 import { TrialProgressBarHeader } from './components/TrialProgressBarHeader';
 import { AuthGateModal } from './components/AuthGateModal';
 import Workspace from './pages/Workspace';
@@ -49,6 +50,7 @@ export default function App() {
     if (path === '/pricing') return 'pricing';
     if (path === '/contact') return 'contact';
     if (path === '/dispatch') return 'dispatch';
+    if (path === '/quality' || path === '/bayesian-quality') return 'quality';
     if (path === '/catalog') return 'catalog';
     if (path === '/ledger') return 'ledger';
     if (path === '/analytics') return 'analytics';
@@ -79,10 +81,12 @@ export default function App() {
   const [isAuthGateOpen, setIsAuthGateOpen] = useState<boolean>(false);
   const [isRoleMatrixOpen, setIsRoleMatrixOpen] = useState<boolean>(false);
   const [verificationBanner, setVerificationBanner] = useState<string | null>(null);
+  const [firebaseUser, setFirebaseUser] = useState<any>(null);
 
   // Synchronize persona with Firebase Auth on login / logout
   useEffect(() => {
     const unsub = onAuthChanged((u) => {
+      setFirebaseUser(u);
       if (u) {
         if (u.email === 'solarastra.in@gmail.com') {
           const superPersona = PERSONA_PROFILES.find(p => p.email === 'solarastra.in@gmail.com') || PERSONA_PROFILES[4];
@@ -96,6 +100,9 @@ export default function App() {
             avatar: u.photoURL || userPersona.avatar,
           });
         }
+      } else {
+        const guestPersona = PERSONA_PROFILES.find(p => p.role === 'guest') || PERSONA_PROFILES[0];
+        setActivePersona(guestPersona);
       }
     });
     return () => unsub();
@@ -311,6 +318,7 @@ export default function App() {
               <DispatchConsole
                 models={models}
                 activePersona={activePersona}
+                firebaseUser={firebaseUser}
                 onNewLedgerEntry={handleNewLedgerEntry}
                 recentLedger={ledger}
                 onNavigateTab={setCurrentTab}
@@ -319,6 +327,21 @@ export default function App() {
                 onClearPrefill={() => {
                   setPrefilledPrompt(undefined);
                   setPrefilledModelId(undefined);
+                }}
+              />
+            )}
+
+            {currentTab === 'quality' && (
+              <QualityInspectorPage
+                qualityTracker={apiService.qualityTracker}
+                feedbackEngine={apiService.feedbackEngine}
+                models={models}
+                activePersona={activePersona}
+                onNavigateTab={setCurrentTab}
+                onSelectModelForDispatch={(modelId, prompt) => {
+                  if (prompt) setPrefilledPrompt(prompt);
+                  if (modelId) setPrefilledModelId(modelId);
+                  setCurrentTab('dispatch');
                 }}
               />
             )}
@@ -477,6 +500,24 @@ export default function App() {
                 }`}
               >
                 Dispatch Console
+              </button>
+              <button
+                id="footer-nav-quality"
+                onClick={() => setCurrentTab('quality')}
+                className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                  currentTab === 'quality' ? 'bg-amber-500/20 text-amber-300 font-bold border border-amber-400/30' : 'hover:text-white hover:bg-white/5'
+                }`}
+              >
+                Quality Inspector
+              </button>
+              <button
+                id="footer-nav-workspace"
+                onClick={() => setCurrentTab('workspace')}
+                className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                  currentTab === 'workspace' ? 'bg-cyan-500/20 text-cyan-300 font-bold border border-cyan-400/30' : 'hover:text-white hover:bg-white/5'
+                }`}
+              >
+                Workspace
               </button>
               <button
                 id="footer-nav-pricing"

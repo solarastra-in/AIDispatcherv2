@@ -83,26 +83,45 @@ export interface ServerSmtpSettings {
   fromEmail: string;
   fromName: string;
   replyTo: string;
+  pool?: boolean;
+  maxConnections?: number;
+  rateLimit?: number;
+  connectionTimeout?: number;
+  socketTimeout?: number;
+  greetingTimeout?: number;
+  authMethod?: string;
+  preset?: string;
   isVerified: boolean;
   lastVerifiedAt?: string;
   lastTestedAt?: string;
+  lastTestRecipient?: string;
+  lastTestStatus?: 'success' | 'failed';
   updatedAt: string;
+  updatedBy?: string;
 }
 
 let smtpSettings: ServerSmtpSettings = {
   id: "global_smtp",
-  host: process.env.SMTP_HOST || "smtp.gmail.com",
-  port: Number(process.env.SMTP_PORT) || 587,
-  secure: process.env.SMTP_SECURE === "true" || false,
+  host: "smtp.gmail.com",
+  port: 587,
+  secure: false,
   requireTls: true,
-  user: process.env.SMTP_USER || "solarastra.in@gmail.com",
-  pass: process.env.SMTP_PASS || "",
-  fromEmail: process.env.SMTP_FROM || "solarastra.in@gmail.com",
+  user: "solarastra.in@gmail.com",
+  pass: "",
+  fromEmail: "solarastra.in@gmail.com",
   fromName: "WhyOr Dispatch AI Enterprise",
   replyTo: "solarastra.in@gmail.com",
+  pool: true,
+  maxConnections: 5,
+  connectionTimeout: 6000,
+  greetingTimeout: 5000,
+  socketTimeout: 6000,
+  authMethod: "LOGIN",
+  preset: "gmail",
   isVerified: true,
   lastVerifiedAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
+  updatedBy: "SuperAdmin",
 };
 
 let emailLogs: Array<{
@@ -2043,7 +2062,7 @@ app.post("/api/credentials/direct-test", requireAuthForBYOK, async (req, res) =>
 
 // ==================== ADMIN CONSOLE & SMTP ENDPOINTS ====================
 
-// 1. Get SMTP Configuration
+// 1. Get SMTP Configuration (Zero Environment Variable Dependency)
 app.get("/api/admin/smtp", (req, res) => {
   res.json({
     success: true,
@@ -2059,17 +2078,47 @@ app.get("/api/admin/smtp", (req, res) => {
       fromEmail: smtpSettings.fromEmail,
       fromName: smtpSettings.fromName,
       replyTo: smtpSettings.replyTo,
+      pool: smtpSettings.pool ?? true,
+      maxConnections: smtpSettings.maxConnections ?? 5,
+      rateLimit: smtpSettings.rateLimit ?? 10,
+      connectionTimeout: smtpSettings.connectionTimeout ?? 6000,
+      socketTimeout: smtpSettings.socketTimeout ?? 6000,
+      greetingTimeout: smtpSettings.greetingTimeout ?? 5000,
+      authMethod: smtpSettings.authMethod ?? "LOGIN",
+      preset: smtpSettings.preset ?? "gmail",
       isVerified: smtpSettings.isVerified,
       lastVerifiedAt: smtpSettings.lastVerifiedAt,
       lastTestedAt: smtpSettings.lastTestedAt,
+      lastTestRecipient: smtpSettings.lastTestRecipient,
+      lastTestStatus: smtpSettings.lastTestStatus,
       updatedAt: smtpSettings.updatedAt,
+      updatedBy: smtpSettings.updatedBy || "SuperAdmin",
     },
   });
 });
 
 // 2. Update SMTP Configuration
 app.post("/api/admin/smtp", (req, res) => {
-  const { host, port, secure, requireTls, user, pass, fromEmail, fromName, replyTo } = req.body;
+  const { 
+    host, 
+    port, 
+    secure, 
+    requireTls, 
+    user, 
+    pass, 
+    fromEmail, 
+    fromName, 
+    replyTo,
+    pool,
+    maxConnections,
+    rateLimit,
+    connectionTimeout,
+    socketTimeout,
+    greetingTimeout,
+    authMethod,
+    preset,
+    updatedBy,
+  } = req.body;
 
   if (host) smtpSettings.host = host.trim();
   if (port) smtpSettings.port = Number(port);
@@ -2080,22 +2129,66 @@ app.post("/api/admin/smtp", (req, res) => {
   if (fromEmail) smtpSettings.fromEmail = fromEmail.trim();
   if (fromName) smtpSettings.fromName = fromName.trim();
   if (replyTo) smtpSettings.replyTo = replyTo.trim();
+  if (typeof pool === "boolean") smtpSettings.pool = pool;
+  if (maxConnections) smtpSettings.maxConnections = Number(maxConnections);
+  if (rateLimit) smtpSettings.rateLimit = Number(rateLimit);
+  if (connectionTimeout) smtpSettings.connectionTimeout = Number(connectionTimeout);
+  if (socketTimeout) smtpSettings.socketTimeout = Number(socketTimeout);
+  if (greetingTimeout) smtpSettings.greetingTimeout = Number(greetingTimeout);
+  if (authMethod) smtpSettings.authMethod = authMethod;
+  if (preset) smtpSettings.preset = preset;
+  if (updatedBy) smtpSettings.updatedBy = updatedBy;
   smtpSettings.updatedAt = new Date().toISOString();
 
   res.json({
     success: true,
-    message: "SMTP server configuration updated successfully.",
+    message: "Admin SMTP configuration updated and stored in server runtime vault.",
     settings: {
       ...smtpSettings,
       pass: undefined,
       passMasked: smtpSettings.pass ? "••••••••••••••••" : "",
+      hasPassword: !!smtpSettings.pass,
+    },
+  });
+});
+
+// 2b. Sync SMTP from Firestore / Client Vault
+app.post("/api/admin/smtp/sync-firestore", (req, res) => {
+  const { settings } = req.body;
+  if (settings && typeof settings === "object") {
+    if (settings.host) smtpSettings.host = settings.host.trim();
+    if (settings.port) smtpSettings.port = Number(settings.port);
+    if (typeof settings.secure === "boolean") smtpSettings.secure = settings.secure;
+    if (typeof settings.requireTls === "boolean") smtpSettings.requireTls = settings.requireTls;
+    if (settings.user) smtpSettings.user = settings.user.trim();
+    if (settings.passRaw) smtpSettings.pass = settings.passRaw.trim();
+    if (settings.fromEmail) smtpSettings.fromEmail = settings.fromEmail.trim();
+    if (settings.fromName) smtpSettings.fromName = settings.fromName.trim();
+    if (settings.replyTo) smtpSettings.replyTo = settings.replyTo.trim();
+    if (typeof settings.pool === "boolean") smtpSettings.pool = settings.pool;
+    if (settings.maxConnections) smtpSettings.maxConnections = Number(settings.maxConnections);
+    if (settings.preset) smtpSettings.preset = settings.preset;
+    if (typeof settings.isVerified === "boolean") smtpSettings.isVerified = settings.isVerified;
+    if (settings.lastVerifiedAt) smtpSettings.lastVerifiedAt = settings.lastVerifiedAt;
+    if (settings.lastTestedAt) smtpSettings.lastTestedAt = settings.lastTestedAt;
+    smtpSettings.updatedAt = new Date().toISOString();
+  }
+
+  res.json({
+    success: true,
+    message: "Server SMTP vault synced with Firestore configuration.",
+    settings: {
+      ...smtpSettings,
+      pass: undefined,
+      passMasked: smtpSettings.pass ? "••••••••••••••••" : "",
+      hasPassword: !!smtpSettings.pass,
     },
   });
 });
 
 // 3. Verify SMTP Connection (Handshake verification)
 app.post("/api/admin/smtp/verify", async (req, res) => {
-  const { host, port, secure, requireTls, user, pass } = req.body;
+  const { host, port, secure, requireTls, user, pass, connectionTimeout, greetingTimeout } = req.body;
   const start = Date.now();
 
   const testHost = (host && typeof host === "string" ? host.trim() : "") || smtpSettings.host || "smtp.gmail.com";
@@ -2117,10 +2210,10 @@ app.post("/api/admin/smtp/verify", async (req, res) => {
       tls: {
         rejectUnauthorized: false,
       },
-      connectionTimeout: 5000,
-      greetingTimeout: 4000,
-      socketTimeout: 5000,
-    });
+      connectionTimeout: Number(connectionTimeout) || 6000,
+      greetingTimeout: Number(greetingTimeout) || 5000,
+      socketTimeout: 6000,
+    } as any);
 
     // Try real handshake with a hard timeout guarantee
     let verified = false;
@@ -2133,14 +2226,14 @@ app.post("/api/admin/smtp/verify", async (req, res) => {
       );
       await Promise.race([verifyPromise, timeoutPromise]);
       verified = true;
-      handshakeDetails = `250-SMTP Connection Established (${testHost}:${testPort} SSL/TLS=${testSecure ? "SSL/TLS Direct" : "STARTTLS"})`;
+      handshakeDetails = `250-SMTP Connection Established (${testHost}:${testPort} Protocol=${testSecure ? "SSL/TLS Direct" : "STARTTLS"})`;
     } catch (vErr: any) {
       if (testPass) {
         throw vErr;
       } else {
         // Without pass, test was a port reachability check
         verified = true;
-        handshakeDetails = `220 ${testHost} ESMTP Server Ready (Awaiting Authentication Credentials)`;
+        handshakeDetails = `220 ${testHost} ESMTP Server Socket Reachable (Awaiting Authentication Password)`;
       }
     }
 
@@ -2235,6 +2328,10 @@ app.post("/api/admin/smtp/send-test", async (req, res) => {
     fromEmail,
     fromName,
     replyTo,
+    pool,
+    maxConnections,
+    connectionTimeout,
+    greetingTimeout,
   } = req.body;
   const start = Date.now();
 
@@ -2325,6 +2422,8 @@ app.post("/api/admin/smtp/send-test", async (req, res) => {
       host: activeHost,
       port: activePort,
       secure: activeSecure,
+      pool: typeof pool === "boolean" ? pool : (smtpSettings.pool ?? true),
+      maxConnections: maxConnections ? Number(maxConnections) : (smtpSettings.maxConnections ?? 5),
       auth: {
         user: activeUser,
         pass: activePass,
@@ -2332,10 +2431,10 @@ app.post("/api/admin/smtp/send-test", async (req, res) => {
       tls: {
         rejectUnauthorized: false,
       },
-      connectionTimeout: 5000,
-      greetingTimeout: 4000,
-      socketTimeout: 5000,
-    });
+      connectionTimeout: Number(connectionTimeout) || 6000,
+      greetingTimeout: Number(greetingTimeout) || 5000,
+      socketTimeout: 6000,
+    } as any);
 
     const sendPromise = transporter.sendMail({
       from: `"${activeFromName}" <${activeFromEmail}>`,
@@ -2358,6 +2457,8 @@ app.post("/api/admin/smtp/send-test", async (req, res) => {
 
     const durationMs = Date.now() - start;
     smtpSettings.lastTestedAt = new Date().toISOString();
+    smtpSettings.lastTestRecipient = recipientEmail;
+    smtpSettings.lastTestStatus = "success";
     smtpSettings.isVerified = true;
     smtpSettings.lastVerifiedAt = new Date().toISOString();
 
@@ -2399,6 +2500,10 @@ app.post("/api/admin/smtp/send-test", async (req, res) => {
       recommendation = `Connection to mail server ${activeHost}:${activePort} timed out. For Gmail, use Port 465 (SSL) or Port 587 (STARTTLS). Check if your network restricts outbound SMTP.`;
     }
 
+    smtpSettings.lastTestedAt = new Date().toISOString();
+    smtpSettings.lastTestRecipient = recipientEmail;
+    smtpSettings.lastTestStatus = "failed";
+
     const failedLog = {
       id: `mail_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       to: recipientEmail,
@@ -2422,11 +2527,21 @@ app.post("/api/admin/smtp/send-test", async (req, res) => {
   }
 });
 
-// 5. Get Email Logs
+// 6. Get Email Logs
 app.get("/api/admin/smtp/logs", (req, res) => {
   res.json({
     success: true,
     logs: emailLogs,
+    count: emailLogs.length,
+  });
+});
+
+// 7. Clear Email Logs
+app.delete("/api/admin/smtp/logs", (req, res) => {
+  emailLogs = [];
+  res.json({
+    success: true,
+    message: "Outbound dispatch audit logs cleared.",
   });
 });
 

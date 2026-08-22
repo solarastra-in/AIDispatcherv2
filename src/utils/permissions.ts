@@ -10,6 +10,7 @@ export type PageTabId =
   | 'research' 
   | 'dispatch' 
   | 'workspace' 
+  | 'quality'
   | 'catalog' 
   | 'ledger' 
   | 'analytics' 
@@ -64,7 +65,7 @@ export const ROLE_DEFINITIONS: Record<UserRole, RolePermissionSpec> = {
     label: 'Guest Visitor',
     badgeColor: 'bg-slate-700/60 text-slate-300 border-white/10',
     description: 'Unauthenticated public visitor exploring features, architecture, and pricing.',
-    allowedPages: ['home', 'how-it-works', 'capabilities', 'examples', 'pricing', 'contact', 'research', 'catalog', 'dispatch'],
+    allowedPages: ['home', 'how-it-works', 'capabilities', 'examples', 'pricing', 'contact', 'research', 'quality', 'catalog', 'dispatch'],
     allowedCapabilities: [
       'view_marketing',
       'view_dispatch_console',
@@ -85,7 +86,7 @@ export const ROLE_DEFINITIONS: Record<UserRole, RolePermissionSpec> = {
     label: 'Pro Developer',
     badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-400/30',
     description: 'Authenticated pro engineer with personal quota, BYOK keys, and full dispatching.',
-    allowedPages: ['home', 'how-it-works', 'capabilities', 'examples', 'pricing', 'contact', 'research', 'dispatch', 'workspace', 'catalog', 'ledger', 'analytics', 'credentials'],
+    allowedPages: ['home', 'how-it-works', 'capabilities', 'examples', 'pricing', 'contact', 'research', 'dispatch', 'workspace', 'quality', 'catalog', 'ledger', 'analytics', 'credentials'],
     allowedCapabilities: [
       'view_marketing',
       'view_dispatch_console',
@@ -113,7 +114,7 @@ export const ROLE_DEFINITIONS: Record<UserRole, RolePermissionSpec> = {
     label: 'Team Member',
     badgeColor: 'bg-blue-500/20 text-blue-300 border-blue-400/30',
     description: 'Enterprise developer operating under department budget caps and org model policies.',
-    allowedPages: ['home', 'how-it-works', 'capabilities', 'examples', 'pricing', 'contact', 'research', 'dispatch', 'workspace', 'catalog', 'ledger', 'analytics', 'teams'],
+    allowedPages: ['home', 'how-it-works', 'capabilities', 'examples', 'pricing', 'contact', 'research', 'dispatch', 'workspace', 'quality', 'catalog', 'ledger', 'analytics', 'teams'],
     allowedCapabilities: [
       'view_marketing',
       'view_dispatch_console',
@@ -137,7 +138,7 @@ export const ROLE_DEFINITIONS: Record<UserRole, RolePermissionSpec> = {
     label: 'Team / Company Admin',
     badgeColor: 'bg-cyan-500/20 text-cyan-300 border-cyan-400/30',
     description: 'Company engineering manager with full seat provisioning, budget enforcement, and BYOK control.',
-    allowedPages: ['home', 'how-it-works', 'capabilities', 'examples', 'pricing', 'contact', 'research', 'dispatch', 'workspace', 'catalog', 'ledger', 'analytics', 'credentials', 'teams'],
+    allowedPages: ['home', 'how-it-works', 'capabilities', 'examples', 'pricing', 'contact', 'research', 'dispatch', 'workspace', 'quality', 'catalog', 'ledger', 'analytics', 'credentials', 'teams'],
     allowedCapabilities: [
       'view_marketing',
       'view_dispatch_console',
@@ -168,7 +169,7 @@ export const ROLE_DEFINITIONS: Record<UserRole, RolePermissionSpec> = {
     label: 'Platform Superadmin',
     badgeColor: 'bg-orange-500/20 text-orange-300 border-orange-400/30',
     description: 'Master platform administrator (solarastra.in@gmail.com) with root governance and global telemetry.',
-    allowedPages: ['home', 'how-it-works', 'capabilities', 'examples', 'pricing', 'contact', 'research', 'dispatch', 'workspace', 'catalog', 'ledger', 'analytics', 'credentials', 'teams', 'admin'],
+    allowedPages: ['home', 'how-it-works', 'capabilities', 'examples', 'pricing', 'contact', 'research', 'dispatch', 'workspace', 'quality', 'catalog', 'ledger', 'analytics', 'credentials', 'teams', 'admin'],
     allowedCapabilities: [
       'view_marketing',
       'view_dispatch_console',

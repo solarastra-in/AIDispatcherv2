@@ -5,9 +5,10 @@ import { ContextLedgerEntry } from '../types';
 interface LiveDispatchBoardProps {
   recentLedger?: ContextLedgerEntry[];
   onNavigateTab?: (tab: string) => void;
+  onSelectPrompt?: (prompt: string) => void;
 }
 
-export const LiveDispatchBoard: React.FC<LiveDispatchBoardProps> = ({ recentLedger = [], onNavigateTab }) => {
+export const LiveDispatchBoard: React.FC<LiveDispatchBoardProps> = ({ recentLedger = [], onNavigateTab, onSelectPrompt }) => {
   const [liveStreamEvents, setLiveStreamEvents] = useState<any[]>([]);
 
   const displayEntries = liveStreamEvents.length > 0 

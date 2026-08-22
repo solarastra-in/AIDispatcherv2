@@ -1,6 +1,7 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { 
   getFirestore, 
+  initializeFirestore,
   collection, 
   doc, 
   setDoc, 
@@ -26,10 +27,66 @@ import firebaseConfig from '../../firebase-applet-config.json';
 // Initialize Firebase App
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
-// Initialize Firestore with custom Database ID if specified
-export const db = firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)'
-  ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
-  : getFirestore(app);
+// Initialize Firestore with custom Database ID and Auto Long-Polling (resilient in sandboxed preview iframe)
+const targetDbId = firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)'
+  ? firebaseConfig.firestoreDatabaseId
+  : undefined;
+
+let firestoreInstance;
+try {
+  firestoreInstance = targetDbId
+    ? initializeFirestore(app, {
+        experimentalAutoDetectLongPolling: true,
+        ignoreUndefinedProperties: true,
+      }, targetDbId)
+    : initializeFirestore(app, {
+        experimentalAutoDetectLongPolling: true,
+        ignoreUndefinedProperties: true,
+      });
+} catch {
+  firestoreInstance = targetDbId ? getFirestore(app, targetDbId) : getFirestore(app);
+}
+
+export const db = firestoreInstance;
+
+export enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+export interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+  };
+}
+
+export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+    },
+    operationType,
+    path
+  };
+  console.warn('Firestore Operation Notice: ', JSON.stringify(errInfo));
+  return errInfo;
+}
 
 // Initialize Firebase Auth
 export const auth = getAuth(app);
@@ -183,9 +240,21 @@ export interface SmtpConfigFirestore {
   fromEmail: string;
   fromName: string;
   replyTo?: string;
+  pool?: boolean;
+  maxConnections?: number;
+  rateLimit?: number;
+  connectionTimeout?: number;
+  socketTimeout?: number;
+  greetingTimeout?: number;
+  authMethod?: string;
+  preset?: string;
   isVerified: boolean;
   lastVerifiedAt?: string;
+  lastTestedAt?: string;
+  lastTestRecipient?: string;
+  lastTestStatus?: 'success' | 'failed';
   updatedAt?: string;
+  updatedBy?: string;
 }
 
 export async function saveSmtpSettingsToFirestore(settings: Partial<SmtpConfigFirestore>) {
@@ -792,7 +861,7 @@ export async function loadContactInquiriesFromFirestore(): Promise<ContactInquir
 // ==================== 11. ADMIN AI ENGINE KEYS & BUDGET CONFIGURATION ====================
 export interface AdminKeyConfig {
   id: string;
-  provider: string;
+  provider: string; // 'gemini' | 'claude' | 'openai' | 'deepseek' | 'groq' | 'mistral' | 'xai'
   providerName: string;
   providerDisplayName: string;
   modelFamily: string;
@@ -800,8 +869,20 @@ export interface AdminKeyConfig {
   apiKey?: string;
   keyMasked: string;
   keyRaw?: string;
+  baseUrl?: string;
+  organizationId?: string;
+  projectId?: string;
+  authMethod?: 'api_key' | 'subscription' | 'session_token' | 'local_proxy';
+  hasSubscription?: boolean;
+  subscriptionTier?: string; // 'ChatGPT Plus' | 'ChatGPT Pro' | 'Claude Pro' | 'Claude Team' | 'Google One AI Premium' | 'DeepSeek Pro' | 'Groq Cloud' | 'Mistral Platform' | 'xAI Grok'
+  subscriptionEmail?: string;
+  sessionTokenMasked?: string;
+  localProxyUrl?: string;
+  lastVerifiedAt?: string;
+  latencyMs?: number;
+  detectedModels?: string[];
   isActive: boolean;
-  status: 'active' | 'warning' | 'budget_exceeded' | 'day_limit_exceeded' | 'invalid';
+  status: 'active' | 'unconfigured' | 'warning' | 'budget_exceeded' | 'day_limit_exceeded' | 'invalid';
   monthlyBudgetCents: number; // in USD dollars
   monthlyBudgetLimit: number;
   currentMonthlySpendUsd: number;
@@ -820,15 +901,17 @@ export interface AdminKeyConfig {
 const DEFAULT_ADMIN_KEYS: AdminKeyConfig[] = [
   {
     id: 'key_gemini',
-    provider: 'gemini',
+    provider: 'google',
     providerName: 'Google Gemini 3.7 Flash & 3.1 Pro/Lite',
     providerDisplayName: 'Google Gemini',
     modelFamily: 'gemini',
     envVarName: 'GEMINI_API_KEY',
     apiKey: '',
     keyMasked: '',
-    isActive: true,
-    status: 'active',
+    hasSubscription: false,
+    authMethod: 'api_key',
+    isActive: false,
+    status: 'unconfigured',
     monthlyBudgetCents: 500,
     monthlyBudgetLimit: 500,
     currentMonthlySpendUsd: 0,
@@ -841,6 +924,7 @@ const DEFAULT_ADMIN_KEYS: AdminKeyConfig[] = [
     isDayUsageOver: false,
     alertEmailSent: false,
     lastUpdated: new Date().toISOString(),
+    notes: 'Google Gemini direct API key or Google One AI Premium subscription.',
   },
   {
     id: 'key_claude',
@@ -851,8 +935,10 @@ const DEFAULT_ADMIN_KEYS: AdminKeyConfig[] = [
     envVarName: 'ANTHROPIC_API_KEY',
     apiKey: '',
     keyMasked: '',
-    isActive: true,
-    status: 'active',
+    hasSubscription: false,
+    authMethod: 'api_key',
+    isActive: false,
+    status: 'unconfigured',
     monthlyBudgetCents: 800,
     monthlyBudgetLimit: 800,
     currentMonthlySpendUsd: 0,
@@ -865,6 +951,7 @@ const DEFAULT_ADMIN_KEYS: AdminKeyConfig[] = [
     isDayUsageOver: false,
     alertEmailSent: false,
     lastUpdated: new Date().toISOString(),
+    notes: 'Direct Anthropic API key or Claude Pro/Team subscription connection.',
   },
   {
     id: 'key_openai',
@@ -875,8 +962,10 @@ const DEFAULT_ADMIN_KEYS: AdminKeyConfig[] = [
     envVarName: 'OPENAI_API_KEY',
     apiKey: '',
     keyMasked: '',
-    isActive: true,
-    status: 'active',
+    hasSubscription: false,
+    authMethod: 'api_key',
+    isActive: false,
+    status: 'unconfigured',
     monthlyBudgetCents: 600,
     monthlyBudgetLimit: 600,
     currentMonthlySpendUsd: 0,
@@ -889,6 +978,7 @@ const DEFAULT_ADMIN_KEYS: AdminKeyConfig[] = [
     isDayUsageOver: false,
     alertEmailSent: false,
     lastUpdated: new Date().toISOString(),
+    notes: 'Direct OpenAI API key or ChatGPT Plus/Pro/Team subscription connection.',
   },
   {
     id: 'key_deepseek',
@@ -899,8 +989,11 @@ const DEFAULT_ADMIN_KEYS: AdminKeyConfig[] = [
     envVarName: 'DEEPSEEK_API_KEY',
     apiKey: '',
     keyMasked: '',
-    isActive: true,
-    status: 'active',
+    baseUrl: 'https://api.deepseek.com',
+    hasSubscription: false,
+    authMethod: 'api_key',
+    isActive: false,
+    status: 'unconfigured',
     monthlyBudgetCents: 300,
     monthlyBudgetLimit: 300,
     currentMonthlySpendUsd: 0,
@@ -913,6 +1006,7 @@ const DEFAULT_ADMIN_KEYS: AdminKeyConfig[] = [
     isDayUsageOver: false,
     alertEmailSent: false,
     lastUpdated: new Date().toISOString(),
+    notes: 'Direct DeepSeek API key or DeepSeek Pro connection.',
   },
   {
     id: 'key_groq',
@@ -923,8 +1017,11 @@ const DEFAULT_ADMIN_KEYS: AdminKeyConfig[] = [
     envVarName: 'GROQ_API_KEY',
     apiKey: '',
     keyMasked: '',
-    isActive: true,
-    status: 'active',
+    baseUrl: 'https://api.groq.com/openai/v1',
+    hasSubscription: false,
+    authMethod: 'api_key',
+    isActive: false,
+    status: 'unconfigured',
     monthlyBudgetCents: 200,
     monthlyBudgetLimit: 200,
     currentMonthlySpendUsd: 0,
@@ -937,18 +1034,22 @@ const DEFAULT_ADMIN_KEYS: AdminKeyConfig[] = [
     isDayUsageOver: false,
     alertEmailSent: false,
     lastUpdated: new Date().toISOString(),
+    notes: 'High-speed Groq LPU inference for sub-100ms processing.',
   },
   {
     id: 'key_mistral',
     provider: 'mistral',
-    providerName: 'Mistral Large 2',
+    providerName: 'Mistral Large 2 & Codestral',
     providerDisplayName: 'Mistral',
     modelFamily: 'mistral',
     envVarName: 'MISTRAL_API_KEY',
     apiKey: '',
     keyMasked: '',
-    isActive: true,
-    status: 'active',
+    baseUrl: 'https://api.mistral.ai/v1',
+    hasSubscription: false,
+    authMethod: 'api_key',
+    isActive: false,
+    status: 'unconfigured',
     monthlyBudgetCents: 250,
     monthlyBudgetLimit: 250,
     currentMonthlySpendUsd: 0,
@@ -961,6 +1062,35 @@ const DEFAULT_ADMIN_KEYS: AdminKeyConfig[] = [
     isDayUsageOver: false,
     alertEmailSent: false,
     lastUpdated: new Date().toISOString(),
+    notes: 'Mistral AI Platform API key connection.',
+  },
+  {
+    id: 'key_xai',
+    provider: 'xai',
+    providerName: 'xAI Grok 3 & Grok 2',
+    providerDisplayName: 'xAI Grok',
+    modelFamily: 'grok',
+    envVarName: 'XAI_API_KEY',
+    apiKey: '',
+    keyMasked: '',
+    baseUrl: 'https://api.x.ai/v1',
+    hasSubscription: false,
+    authMethod: 'api_key',
+    isActive: false,
+    status: 'unconfigured',
+    monthlyBudgetCents: 350,
+    monthlyBudgetLimit: 350,
+    currentMonthlySpendUsd: 0,
+    currentSpend: 0,
+    dailyUsageLimitUsd: 30,
+    dailyUsageLimit: 30,
+    todaySpendUsd: 0,
+    todaySpend: 0,
+    isBudgetOver: false,
+    isDayUsageOver: false,
+    alertEmailSent: false,
+    lastUpdated: new Date().toISOString(),
+    notes: 'Direct xAI Grok API key or SuperGrok subscription connection.',
   }
 ];
 
@@ -973,13 +1103,31 @@ export async function saveAdminKeyConfigToFirestore(config: AdminKeyConfig): Pro
   // Recompute budget and day usage flags
   const isBudgetOver = monthlyLimit > 0 && currentSpend >= monthlyLimit;
   const isDayUsageOver = dailyLimit > 0 && todaySpend >= dailyLimit;
+  
+  const hasKey = Boolean(config.apiKey && config.apiKey.trim().length > 0);
+  const hasSub = Boolean(config.hasSubscription && (config.subscriptionTier || config.sessionTokenMasked || config.subscriptionEmail));
+  const isConfigured = hasKey || hasSub;
+
   let status = config.status;
-  if (isBudgetOver) status = 'budget_exceeded';
-  else if (isDayUsageOver) status = 'day_limit_exceeded';
-  else if (config.isActive) status = 'active';
+  let isActive = Boolean(config.isActive);
+  if (!isConfigured) {
+    status = 'unconfigured';
+    isActive = false;
+  } else if (isBudgetOver) {
+    status = 'budget_exceeded';
+  } else if (isDayUsageOver) {
+    status = 'day_limit_exceeded';
+  } else if (isActive) {
+    status = 'active';
+  } else {
+    status = 'unconfigured';
+  }
 
   const payload: AdminKeyConfig = {
     ...config,
+    apiKey: config.apiKey?.trim() || '',
+    hasSubscription: hasSub,
+    isActive,
     monthlyBudgetCents: monthlyLimit,
     monthlyBudgetLimit: monthlyLimit,
     currentMonthlySpendUsd: currentSpend,
@@ -1022,8 +1170,28 @@ export async function loadAdminKeyConfigsFromFirestore(): Promise<AdminKeyConfig
 
         const isBudgetOver = monthlyLimit > 0 && currentSpend >= monthlyLimit;
         const isDayUsageOver = dailyLimit > 0 && todaySpend >= dailyLimit;
+        
+        const hasKey = Boolean(data.apiKey && data.apiKey.trim().length > 0);
+        const hasSub = Boolean(data.hasSubscription && (data.subscriptionTier || data.sessionTokenMasked || data.subscriptionEmail));
+        const isConfigured = hasKey || hasSub;
+
+        let status = data.status;
+        let isActive = Boolean(data.isActive);
+        if (!isConfigured) {
+          status = 'unconfigured';
+          isActive = false;
+        } else if (isBudgetOver) {
+          status = 'budget_exceeded';
+        } else if (isDayUsageOver) {
+          status = 'day_limit_exceeded';
+        }
+
         configs.push({
           ...data,
+          apiKey: data.apiKey?.trim() || '',
+          hasSubscription: hasSub,
+          isActive,
+          status,
           providerName: data.providerName || data.providerDisplayName || data.provider,
           modelFamily: data.modelFamily || data.provider,
           monthlyBudgetLimit: monthlyLimit,
@@ -1038,11 +1206,34 @@ export async function loadAdminKeyConfigsFromFirestore(): Promise<AdminKeyConfig
           isDayUsageOver,
         });
       });
+      
+      // Ensure all default providers exist if missing from Firestore
+      const loadedMap = new Map(configs.map(c => [c.id, c]));
+      for (const def of DEFAULT_ADMIN_KEYS) {
+        if (!loadedMap.has(def.id)) {
+          configs.push({ ...def, status: 'unconfigured', isActive: false, apiKey: '', hasSubscription: false });
+        }
+      }
+
       safeStorageSet('whyor_admin_keys', configs);
       return configs;
     }
   } catch (err: any) {
     console.warn('Notice: Firestore offline for admin keys, using cached/default keys:', err?.message || err);
   }
-  return safeStorageGet<AdminKeyConfig[]>('whyor_admin_keys', DEFAULT_ADMIN_KEYS);
+  
+  const rawCached = safeStorageGet<AdminKeyConfig[]>('whyor_admin_keys', DEFAULT_ADMIN_KEYS);
+  const sanitized = (rawCached || DEFAULT_ADMIN_KEYS).map(k => {
+    const hasKey = Boolean(k.apiKey && k.apiKey.trim().length > 0);
+    const hasSub = Boolean(k.hasSubscription && (k.subscriptionTier || k.sessionTokenMasked || k.subscriptionEmail));
+    const isConfigured = hasKey || hasSub;
+    return {
+      ...k,
+      apiKey: k.apiKey?.trim() || '',
+      hasSubscription: hasSub,
+      isActive: isConfigured ? Boolean(k.isActive) : false,
+      status: isConfigured ? (k.status || 'active') : 'unconfigured',
+    };
+  });
+  return sanitized;
 }
