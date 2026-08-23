@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { AIProvider } from '../types';
 import { signInWithGoogle, saveCredentialToFirestore, recordAuditLogToFirestore } from '../lib/firebase';
-import { authedFetch } from '../lib/firebaseClient';
+import { authedFetch, safeFetchJson } from '../lib/firebaseClient';
 import { useAuth } from '../lib/useAuth';
 
 interface SubscriptionOAuthModalProps {
@@ -81,20 +81,25 @@ export const SubscriptionOAuthModal: React.FC<SubscriptionOAuthModalProps> = ({
         return;
       }
 
-      const res = await authedFetch('/api/credentials/subscription/login', {
+      const res = await safeFetchJson<{ success: boolean; error?: string }>('/api/credentials/subscription/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-email': activeEmail,
+          'x-auth-method': 'google'
+        },
         body: JSON.stringify({
           provider,
           email: activeEmail,
           oauthType,
           subscriptionTier: selectedTier,
           sessionToken: tokenToPass,
+          userEmail: activeEmail
         }),
       });
 
-      const data = await res.json();
-      if (data.success) {
+      const data = res.data;
+      if (res.ok && data?.success) {
         // Persist to Firestore
         await saveCredentialToFirestore(provider, {
           provider,
@@ -117,7 +122,7 @@ export const SubscriptionOAuthModal: React.FC<SubscriptionOAuthModalProps> = ({
         onSuccess();
         onClose();
       } else {
-        setAuthError(data.error || 'Failed to authenticate subscription');
+        setAuthError(data?.error || res.error || 'Failed to authenticate subscription');
       }
     } catch (err: any) {
       setAuthError(err.message || 'Network error connecting subscription');

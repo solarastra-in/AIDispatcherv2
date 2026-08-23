@@ -53,3 +53,41 @@ export async function authedFetch(url: string, options: RequestInit = {}): Promi
   }
   return fetch(url, { ...options, headers });
 }
+
+export async function safeFetchJson<T = any>(url: string, options: RequestInit = {}): Promise<{ ok: boolean; status: number; data: T; error?: string }> {
+  try {
+    const res = await authedFetch(url, options);
+    const contentType = res.headers.get("content-type") || "";
+    let data: any = {};
+    
+    if (contentType.includes("application/json")) {
+      try {
+        data = await res.json();
+      } catch (err: any) {
+        data = { error: "Failed to parse JSON response" };
+      }
+    } else {
+      const text = await res.text();
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        data = { error: text.length > 200 ? `HTTP ${res.status}: ${res.statusText || 'Server Error'}` : text || `HTTP ${res.status}` };
+      }
+    }
+
+    return {
+      ok: res.ok,
+      status: res.status,
+      data: data as T,
+      error: !res.ok ? (data?.error || data?.message || `Request failed with status ${res.status}`) : undefined,
+    };
+  } catch (netErr: any) {
+    return {
+      ok: false,
+      status: 0,
+      data: {} as T,
+      error: netErr.message || "Network error. Please check connection.",
+    };
+  }
+}
+

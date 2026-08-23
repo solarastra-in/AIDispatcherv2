@@ -35,7 +35,7 @@ import {
   saveCredentialToFirestore,
   auth
 } from '../../lib/firebase';
-import { authedFetch } from '../../lib/firebaseClient';
+import { authedFetch, safeFetchJson } from '../../lib/firebaseClient';
 
 interface AdminKeysAndBudgetsPortalProps {
   onNotifyStatus?: (message: { type: 'success' | 'error' | 'info'; text: string }) => void;
@@ -177,7 +177,7 @@ export const AdminKeysAndBudgetsPortal: React.FC<AdminKeysAndBudgetsPortalProps>
     const isSubscription = k.authMethod === 'subscription' || (k.hasSubscription && !k.apiKey);
 
     try {
-      const res = await authedFetch('/api/credentials/verify', {
+      const res = await safeFetchJson<{ success: boolean; message?: string; latencyMs?: number; detectedModels?: string[]; error?: string }>('/api/credentials/verify', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -195,8 +195,8 @@ export const AdminKeysAndBudgetsPortal: React.FC<AdminKeysAndBudgetsPortalProps>
         })
       });
 
-      const data = await res.json();
-      if (res.ok && data.success) {
+      const data = res.data;
+      if (res.ok && data?.success) {
         setTestResults(prev => ({
           ...prev,
           [k.id]: {
@@ -220,7 +220,7 @@ export const AdminKeysAndBudgetsPortal: React.FC<AdminKeysAndBudgetsPortalProps>
           ...prev,
           [k.id]: {
             success: false,
-            message: data.error || 'Failed to authenticate with provider. Please verify credentials.'
+            message: data?.error || res.error || 'Failed to authenticate with provider. Please verify credentials.'
           }
         }));
       }
@@ -368,7 +368,7 @@ export const AdminKeysAndBudgetsPortal: React.FC<AdminKeysAndBudgetsPortalProps>
     const userEmail = auth.currentUser?.email || 'solarastra.in@gmail.com';
 
     try {
-      const res = await authedFetch('/api/credentials/subscription/login', {
+      const res = await safeFetchJson<{ success: boolean; message?: string; credential?: any; error?: string }>('/api/credentials/subscription/login', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -386,8 +386,8 @@ export const AdminKeysAndBudgetsPortal: React.FC<AdminKeysAndBudgetsPortalProps>
         })
       });
 
-      const data = await res.json();
-      if (res.ok && data.success) {
+      const data = res.data;
+      if (res.ok && data?.success) {
         // Update local state and Firestore
         const maskedToken = enrollSessionToken ? `${enrollSessionToken.slice(0, 6)}...${enrollSessionToken.slice(-4)}` : `auth_${Date.now().toString(36)}`;
         
@@ -447,7 +447,7 @@ export const AdminKeysAndBudgetsPortal: React.FC<AdminKeysAndBudgetsPortalProps>
 
         setEnrollModalConfig(null);
       } else {
-        setEnrollError(data.error || 'Failed to enroll subscription. Please verify session credentials.');
+        setEnrollError(data?.error || res.error || 'Failed to enroll subscription. Please verify session credentials.');
       }
     } catch (err: any) {
       setEnrollError(err.message || 'Network error communicating with subscription server.');
@@ -462,7 +462,7 @@ export const AdminKeysAndBudgetsPortal: React.FC<AdminKeysAndBudgetsPortalProps>
     const provider = k.provider === 'gemini' ? 'google' : k.provider;
 
     try {
-      await authedFetch('/api/credentials/subscription/disconnect', {
+      await safeFetchJson('/api/credentials/subscription/disconnect', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

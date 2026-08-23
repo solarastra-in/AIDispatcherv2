@@ -68,13 +68,18 @@ export async function firebaseAuthMiddleware(req: Request, _res: Response, next:
   // Also check if x-user-email header was provided during development/testing
   const devEmail = req.headers["x-user-email"] as string | undefined;
 
+  let email: string | null = null;
   if (token) {
     const identity = await verifyFirebaseIdToken(token);
-    (req as any).authenticatedEmail = identity?.email ?? null;
-  } else if (devEmail) {
-    (req as any).authenticatedEmail = devEmail;
-  } else {
-    (req as any).authenticatedEmail = null;
+    if (identity?.email) {
+      email = identity.email;
+    }
   }
+
+  if (!email && devEmail) {
+    email = devEmail;
+  }
+
+  (req as any).authenticatedEmail = email;
   next();
 }

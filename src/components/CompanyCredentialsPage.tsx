@@ -49,7 +49,7 @@ import { SubscriptionOAuthModal } from './SubscriptionOAuthModal';
 import { LowBalanceToast, LowBalanceAlert } from './LowBalanceToast';
 import ProviderConnectPanel from './ProviderConnectPanel';
 import { useAuth } from '../lib/useAuth';
-import { authedFetch } from '../lib/firebaseClient';
+import { authedFetch, safeFetchJson } from '../lib/firebaseClient';
 import { AuthGateModal } from './AuthGateModal';
 
 interface ProviderConfigMeta {
@@ -262,18 +262,18 @@ export const CompanyCredentialsPage: React.FC<CompanyCredentialsPageProps> = ({
     try {
       setIsLoading(true);
       const [profileRes, credsRes, gatewayRes] = await Promise.all([
-        authedFetch('/api/credentials/profile'),
-        authedFetch('/api/credentials'),
-        authedFetch('/api/credentials/subscription/gateway-status'),
+        safeFetchJson('/api/credentials/profile'),
+        safeFetchJson('/api/credentials'),
+        safeFetchJson('/api/credentials/subscription/gateway-status'),
       ]);
 
-      const profileData = await profileRes.json();
-      const credsData = await credsRes.json();
-      const gatewayData = await gatewayRes.json();
+      const profileData = profileRes.data;
+      const credsData = credsRes.data;
+      const gatewayData = gatewayRes.data;
 
-      setProfile(profileData);
-      setCredentials(credsData || {});
-      setGatewayConfig(gatewayData);
+      setProfile(profileData || null);
+      setCredentials((credsData as any) || {});
+      setGatewayConfig(gatewayData as any);
 
       // Pre-fill inputs & Evaluate Low Balance Quota Alerts
       const initialBaseUrls: Record<string, string> = {};
@@ -344,7 +344,7 @@ export const CompanyCredentialsPage: React.FC<CompanyCredentialsPageProps> = ({
     const thresholdPct = thresholdInputs[provider];
 
     try {
-      const res = await authedFetch('/api/credentials/save', {
+      const res = await safeFetchJson<{ success: boolean; message?: string; error?: string }>('/api/credentials/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -359,15 +359,15 @@ export const CompanyCredentialsPage: React.FC<CompanyCredentialsPageProps> = ({
         }),
       });
 
-      const data = await res.json();
-      if (data.success) {
-        setNotification({ type: 'success', message: data.message });
+      const data = res.data;
+      if (res.ok && data?.success) {
+        setNotification({ type: 'success', message: data.message || 'Credential saved successfully' });
         setKeyInputs(prev => ({ ...prev, [provider]: '' }));
         // Clear dismissed state for this provider so any low balance condition is re-evaluated
         setDismissedAlerts(prev => ({ ...prev, [provider]: false }));
         await loadData();
       } else {
-        setNotification({ type: 'error', message: data.error || 'Failed to save credential' });
+        setNotification({ type: 'error', message: data?.error || res.error || 'Failed to save credential' });
       }
     } catch (err: any) {
       setNotification({ type: 'error', message: 'Error saving credential: ' + err.message });
@@ -382,7 +382,7 @@ export const CompanyCredentialsPage: React.FC<CompanyCredentialsPageProps> = ({
     if (!requireAuthGuard('adjusting balance or quota settings')) return;
 
     try {
-      const res = await authedFetch('/api/credentials/adjust-balance', {
+      const res = await safeFetchJson<{ success: boolean; message?: string; error?: string }>('/api/credentials/adjust-balance', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -391,14 +391,14 @@ export const CompanyCredentialsPage: React.FC<CompanyCredentialsPageProps> = ({
         }),
       });
 
-      const data = await res.json();
-      if (data.success) {
-        setNotification({ type: 'success', message: data.message });
+      const data = res.data;
+      if (res.ok && data?.success) {
+        setNotification({ type: 'success', message: data.message || 'Balance updated successfully' });
         // Clear dismissed state so low-balance toast pops up
         setDismissedAlerts(prev => ({ ...prev, [provider]: false }));
         await loadData();
       } else {
-        setNotification({ type: 'error', message: data.error || 'Failed to adjust balance' });
+        setNotification({ type: 'error', message: data?.error || res.error || 'Failed to adjust balance' });
       }
     } catch (err: any) {
       setNotification({ type: 'error', message: 'Error: ' + err.message });
@@ -476,7 +476,7 @@ export const CompanyCredentialsPage: React.FC<CompanyCredentialsPageProps> = ({
       const baseUrl = baseUrlInputs[provider];
       const organizationId = orgInputs[provider];
 
-      const res = await authedFetch('/api/credentials/verify', {
+      const res = await safeFetchJson<any>('/api/credentials/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -488,13 +488,13 @@ export const CompanyCredentialsPage: React.FC<CompanyCredentialsPageProps> = ({
         }),
       });
 
-      const data = await res.json();
+      const data = res.data || { success: false, error: res.error };
       setVerifyResults(prev => ({ ...prev, [provider]: data }));
-      if (data.success) {
-        setNotification({ type: 'success', message: data.message });
+      if (res.ok && data.success) {
+        setNotification({ type: 'success', message: data.message || 'Verification successful' });
         await loadData();
       } else {
-        setNotification({ type: 'error', message: data.error || 'Verification failed' });
+        setNotification({ type: 'error', message: data.error || res.error || 'Verification failed' });
       }
     } catch (err: any) {
       setVerifyResults(prev => ({ ...prev, [provider]: { success: false, error: err.message } }));
@@ -509,15 +509,17 @@ export const CompanyCredentialsPage: React.FC<CompanyCredentialsPageProps> = ({
     if (!requireAuthGuard('toggling local proxy adapter')) return;
 
     try {
-      const res = await authedFetch('/api/credentials/subscription/proxy/toggle', {
+      const res = await safeFetchJson<{ success: boolean; message?: string; error?: string }>('/api/credentials/subscription/proxy/toggle', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ provider }),
       });
-      const data = await res.json();
-      if (data.success) {
-        setNotification({ type: 'success', message: data.message });
+      const data = res.data;
+      if (res.ok && data?.success) {
+        setNotification({ type: 'success', message: data.message || 'Proxy toggled' });
         await loadData();
+      } else {
+        setNotification({ type: 'error', message: data?.error || res.error || 'Failed to toggle proxy' });
       }
     } catch (err: any) {
       setNotification({ type: 'error', message: 'Failed to toggle proxy: ' + err.message });
@@ -529,13 +531,15 @@ export const CompanyCredentialsPage: React.FC<CompanyCredentialsPageProps> = ({
     if (!requireAuthGuard('modifying unified subscription gateway')) return;
 
     try {
-      const res = await authedFetch('/api/credentials/subscription/gateway-toggle', {
+      const res = await safeFetchJson<{ success: boolean; message?: string; error?: string }>('/api/credentials/subscription/gateway-toggle', {
         method: 'POST',
       });
-      const data = await res.json();
-      if (data.success) {
-        setNotification({ type: 'success', message: data.message });
+      const data = res.data;
+      if (res.ok && data?.success) {
+        setNotification({ type: 'success', message: data.message || 'Gateway toggled' });
         await loadData();
+      } else {
+        setNotification({ type: 'error', message: data?.error || res.error || 'Failed to toggle gateway' });
       }
     } catch (err: any) {
       setNotification({ type: 'error', message: 'Failed to toggle gateway: ' + err.message });
@@ -548,15 +552,17 @@ export const CompanyCredentialsPage: React.FC<CompanyCredentialsPageProps> = ({
     if (!confirm(`Unlink subscription session for ${provider.toUpperCase()}?`)) return;
 
     try {
-      const res = await authedFetch('/api/credentials/subscription/disconnect', {
+      const res = await safeFetchJson<{ success: boolean; message?: string; error?: string }>('/api/credentials/subscription/disconnect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ provider }),
       });
-      const data = await res.json();
-      if (data.success) {
-        setNotification({ type: 'success', message: data.message });
+      const data = res.data;
+      if (res.ok && data?.success) {
+        setNotification({ type: 'success', message: data.message || 'Subscription disconnected' });
         await loadData();
+      } else {
+        setNotification({ type: 'error', message: data?.error || res.error || 'Failed to unlink subscription' });
       }
     } catch (err: any) {
       setNotification({ type: 'error', message: 'Failed to unlink subscription: ' + err.message });
@@ -569,17 +575,19 @@ export const CompanyCredentialsPage: React.FC<CompanyCredentialsPageProps> = ({
     if (!confirm(`Remove credentials for ${provider.toUpperCase()} from your company vault?`)) return;
 
     try {
-      const res = await authedFetch('/api/credentials/delete', {
+      const res = await safeFetchJson<{ success: boolean; message?: string; error?: string }>('/api/credentials/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ provider }),
       });
 
-      const data = await res.json();
-      if (data.success) {
-        setNotification({ type: 'success', message: data.message });
+      const data = res.data;
+      if (res.ok && data?.success) {
+        setNotification({ type: 'success', message: data.message || 'Credential deleted' });
         setKeyInputs(prev => ({ ...prev, [provider]: '' }));
         await loadData();
+      } else {
+        setNotification({ type: 'error', message: data?.error || res.error || 'Failed to delete credential' });
       }
     } catch (err: any) {
       setNotification({ type: 'error', message: 'Failed to remove credential: ' + err.message });
@@ -594,7 +602,7 @@ export const CompanyCredentialsPage: React.FC<CompanyCredentialsPageProps> = ({
     setTestResponse(null);
 
     try {
-      const res = await authedFetch('/api/credentials/direct-test', {
+      const res = await safeFetchJson<any>('/api/credentials/direct-test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -605,15 +613,15 @@ export const CompanyCredentialsPage: React.FC<CompanyCredentialsPageProps> = ({
         }),
       });
 
-      const data = await res.json();
+      const data = res.data || { success: false, error: res.error };
       setTestResponse(data);
-      if (data.success) {
+      if (res.ok && data.success) {
         setNotification({ 
           type: 'success', 
           message: `Live test executed in ${data.latencyMs}ms (${data.billingMode === 'subscription_flat_rate' ? 'Flat Subscription $0.00/token' : 'Direct API Key'})` 
         });
       } else {
-        setNotification({ type: 'error', message: data.error || 'Execution failed' });
+        setNotification({ type: 'error', message: data.error || res.error || 'Execution failed' });
       }
     } catch (err: any) {
       setTestResponse({ success: false, error: err.message });

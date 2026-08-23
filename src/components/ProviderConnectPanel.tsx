@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { authedFetch } from "../lib/firebaseClient";
+import { authedFetch, safeFetchJson } from "../lib/firebaseClient";
 import { useAuth } from "../lib/useAuth";
 import { 
   KeyRound, 
@@ -101,13 +101,12 @@ const ProviderCard: React.FC<{ flow: ConnectFlow; onSaved: () => void }> = ({ fl
     setSavingKey(true);
     setVerifyError(null);
     try {
-      const res = await authedFetch("/api/credentials/save", {
+      const res = await safeFetchJson<{ error?: string }>("/api/credentials/save", {
         method: "POST",
         body: JSON.stringify({ provider: flow.provider, apiKey: apiKeyInput, authMethod: "api_key" }),
       });
       if (!res.ok) {
-        const d = await res.json().catch(() => ({}));
-        throw new Error(d.error || "Failed to save credentials");
+        throw new Error(res.data?.error || res.error || "Failed to save credentials");
       }
       setApiKeyInput("");
       setSaveKeySuccess(true);
@@ -130,15 +129,15 @@ const ProviderCard: React.FC<{ flow: ConnectFlow; onSaved: () => void }> = ({ fl
     setVerifyError(null);
     setVerifySuccess(null);
     try {
-      const res = await authedFetch("/api/credentials/verify-proxy", {
+      const res = await safeFetchJson<{ verified?: boolean; success?: boolean; latencyMs?: number; detectedModels?: string[]; error?: string }>("/api/credentials/verify-proxy", {
         method: "POST",
         body: JSON.stringify({ provider: flow.provider, localProxyUrl: proxyUrlInput }),
       });
-      const data = await res.json();
-      if (!res.ok || !data.verified) {
-        setVerifyError(data.error || "Proxy verification failed. Check that your local endpoint is accessible.");
+      const data = res.data;
+      if (!res.ok || !(data?.verified || data?.success)) {
+        setVerifyError(data?.error || res.error || "Proxy verification failed. Check that your local endpoint is accessible.");
       } else {
-        setVerifySuccess({ latencyMs: data.latencyMs, models: data.detectedModels || [] });
+        setVerifySuccess({ latencyMs: data.latencyMs || 0, models: data.detectedModels || [] });
         onSaved();
       }
     } catch (e: any) {
