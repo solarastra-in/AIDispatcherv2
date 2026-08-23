@@ -37,6 +37,7 @@ import {
   SAMPLE_TEMPLATE_VARIABLES, 
   interpolateTemplate 
 } from '../lib/defaultTemplates';
+import { resolveApiUrl } from '../lib/firebaseClient';
 
 interface EmailTemplateEditorProps {
   currentUserEmail?: string;
@@ -244,7 +245,7 @@ export const EmailTemplateEditor: React.FC<EmailTemplateEditorProps> = ({
       if (onSendTestNotification) {
         data = await onSendTestNotification(selectedTemplateId, renderedSubject, renderedHtml, recipient);
       } else {
-        const res = await fetch('/api/admin/smtp/send-test', {
+        const res = await fetch(resolveApiUrl('/api/admin/smtp/send-test'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

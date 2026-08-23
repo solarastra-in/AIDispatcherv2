@@ -55,6 +55,7 @@ import {
   formatFirebaseAuthError,
   SmtpConfigFirestore
 } from '../lib/firebase';
+import { getApiBaseUrl, setApiBaseUrl, resolveApiUrl } from '../lib/firebaseClient';
 import { User } from 'firebase/auth';
 import { CompanyTeamOnboarding } from './CompanyTeamOnboarding';
 import { EmailTemplateEditor } from './EmailTemplateEditor';
@@ -149,6 +150,60 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
   const [emailLogs, setEmailLogs] = useState<any[]>([]);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
 
+  // Backend Server Endpoint Management (For Static Host vs Full-Stack Node Server)
+  const [customApiUrl, setCustomApiUrl] = useState<string>(getApiBaseUrl());
+  const [backendHealth, setBackendHealth] = useState<{
+    status: 'checking' | 'healthy' | 'static_host' | 'error';
+    latencyMs?: number;
+    details?: string;
+  }>({ status: 'checking' });
+  const [showHostingGuide, setShowHostingGuide] = useState<boolean>(false);
+
+  // Ping backend health
+  const checkBackendHealth = async (overrideUrl?: string) => {
+    setBackendHealth({ status: 'checking' });
+    const targetBase = overrideUrl !== undefined ? overrideUrl.trim().replace(/\/+$/, '') : getApiBaseUrl();
+    const testUrl = targetBase ? `${targetBase}/api/health` : '/api/health';
+    const start = Date.now();
+    try {
+      const res = await fetch(testUrl, { method: 'GET' });
+      const latencyMs = Date.now() - start;
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        setBackendHealth({
+          status: 'healthy',
+          latencyMs,
+          details: `Node.js Backend Online (${latencyMs}ms) • Domain: ${data.domain || 'active'} • Models: ${data.activeModels || 0}`,
+        });
+      } else {
+        const text = await res.text().catch(() => '');
+        const isHtml = text.includes('<!DOCTYPE') || text.includes('<html') || res.status === 404;
+        setBackendHealth({
+          status: 'static_host',
+          details: isHtml
+            ? 'Static Web Host Detected (HTTP 404/HTML). Node.js backend server is not running on this domain.'
+            : `HTTP ${res.status}: Backend responded with non-JSON format.`,
+        });
+      }
+    } catch (netErr: any) {
+      setBackendHealth({
+        status: 'error',
+        details: `Connection failed: ${netErr.message || 'Cannot reach API server'}`,
+      });
+    }
+  };
+
+  const handleSaveBackendUrl = (newUrl: string) => {
+    setApiBaseUrl(newUrl);
+    setCustomApiUrl(newUrl);
+    checkBackendHealth(newUrl);
+    setStatusMessage({
+      type: 'success',
+      text: newUrl ? `Backend API URL updated to: ${newUrl}` : 'Backend API URL reset to same-origin relative path.',
+    });
+  };
+
   // Listen to Firebase Auth state
   useEffect(() => {
     const unsubscribe = onAuthChanged((user) => {
@@ -160,8 +215,9 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
     return () => unsubscribe();
   }, []);
 
-  // Fetch initial SMTP settings & logs from server & Firestore
+  // Fetch initial SMTP settings & logs from server & Firestore and check backend health
   useEffect(() => {
+    checkBackendHealth();
     fetchSmtpSettings();
     fetchEmailLogs();
     fetchAuditLogs();
@@ -196,33 +252,30 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
       }
 
       // Also sync from server runtime endpoint
-      const res = await fetch('/api/admin/smtp');
-      if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
-        const data = await res.json();
-        if (data.success && data.settings) {
-          const s = data.settings;
-          if (!cloudSmtp) {
-            setSmtpHost(s.host || 'smtp.gmail.com');
-            setSmtpPort(s.port || 587);
-            setSmtpSecure(s.secure || false);
-            setSmtpRequireTls(s.requireTls ?? true);
-            setSmtpUser(s.user || 'solarastra.in@gmail.com');
-            setSmtpFromEmail(s.fromEmail || 'solarastra.in@gmail.com');
-            setSmtpFromName(s.fromName || 'WhyOr Dispatch AI Enterprise');
-            setSmtpReplyTo(s.replyTo || 'solarastra.in@gmail.com');
-            setSmtpPool(s.pool ?? true);
-            setSmtpMaxConnections(s.maxConnections ?? 5);
-            setSmtpRateLimit(s.rateLimit ?? 10);
-            setSmtpConnectionTimeout(s.connectionTimeout ?? 6000);
-            setSmtpGreetingTimeout(s.greetingTimeout ?? 5000);
-            setSmtpSocketTimeout(s.socketTimeout ?? 6000);
-            setSmtpAuthMethod(s.authMethod || 'LOGIN');
-            setSmtpPreset(s.preset || 'gmail');
-          }
-          setIsVerified(s.isVerified);
-          setLastVerifiedAt(s.lastVerifiedAt);
-          setHasStoredPassword(s.hasPassword);
+      const { ok, data } = await safeFetchJson('/api/admin/smtp');
+      if (ok && data?.success && data?.settings) {
+        const s = data.settings;
+        if (!cloudSmtp) {
+          setSmtpHost(s.host || 'smtp.gmail.com');
+          setSmtpPort(s.port || 587);
+          setSmtpSecure(s.secure || false);
+          setSmtpRequireTls(s.requireTls ?? true);
+          setSmtpUser(s.user || 'solarastra.in@gmail.com');
+          setSmtpFromEmail(s.fromEmail || 'solarastra.in@gmail.com');
+          setSmtpFromName(s.fromName || 'WhyOr Dispatch AI Enterprise');
+          setSmtpReplyTo(s.replyTo || 'solarastra.in@gmail.com');
+          setSmtpPool(s.pool ?? true);
+          setSmtpMaxConnections(s.maxConnections ?? 5);
+          setSmtpRateLimit(s.rateLimit ?? 10);
+          setSmtpConnectionTimeout(s.connectionTimeout ?? 6000);
+          setSmtpGreetingTimeout(s.greetingTimeout ?? 5000);
+          setSmtpSocketTimeout(s.socketTimeout ?? 6000);
+          setSmtpAuthMethod(s.authMethod || 'LOGIN');
+          setSmtpPreset(s.preset || 'gmail');
         }
+        setIsVerified(s.isVerified);
+        setLastVerifiedAt(s.lastVerifiedAt);
+        setHasStoredPassword(s.hasPassword);
       }
     } catch (err) {
       console.warn('Using local fallback for SMTP settings');
@@ -231,13 +284,10 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
 
   const fetchEmailLogs = async () => {
     try {
-      const res = await fetch('/api/admin/smtp/logs');
-      if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
-        const data = await res.json();
-        if (data.success && Array.isArray(data.logs)) {
-          setEmailLogs(data.logs);
-          return;
-        }
+      const { ok, data } = await safeFetchJson('/api/admin/smtp/logs');
+      if (ok && data?.success && Array.isArray(data.logs)) {
+        setEmailLogs(data.logs);
+        return;
       }
       const cloudLogs = await loadEmailLogsFromFirestore(25);
       if (cloudLogs.length > 0) setEmailLogs(cloudLogs);
@@ -383,12 +433,11 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
 
     try {
       // 1. Save to Server Runtime Vault
-      const res = await fetch('/api/admin/smtp', {
+      const { ok, data } = await safeFetchJson('/api/admin/smtp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      const data = await res.json();
 
       // 2. Persist to Firestore Cloud Database
       await saveSmtpSettingsToFirestore({
@@ -434,6 +483,8 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
   // Safe JSON API fetch utility to prevent JSON parse crashes on HTML error responses
   const safeFetchJson = async (url: string, options?: RequestInit, retryCount = 0): Promise<{ ok: boolean; status: number; data: any }> => {
     try {
+      const resolvedUrl = resolveApiUrl(url);
+
       // Attach auth token if user is signed in
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
@@ -451,7 +502,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
         }
       }
 
-      const res = await fetch(url, {
+      const res = await fetch(resolvedUrl, {
         ...options,
         headers,
       });
@@ -1184,39 +1235,167 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
       {/* ==================== TAB 1: SMTP EMAIL SETTINGS ==================== */}
       {activeTab === 'smtp' && (
         <div className="space-y-6">
-          {/* Architecture & Template Quick Switch Banner */}
-          <div className="p-4 rounded-2xl bg-gradient-to-r from-indigo-950/50 via-purple-950/40 to-slate-900/80 border border-indigo-500/25 backdrop-blur-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-            <div className="flex items-start sm:items-center gap-3.5">
-              <div className="w-11 h-11 rounded-xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 shrink-0">
-                <Database className="w-5 h-5" />
-              </div>
-              <div className="space-y-0.5">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h4 className="text-xs font-bold text-white uppercase tracking-wider font-mono">
-                    Dynamic Admin SMTP Configuration
-                  </h4>
-                  <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-400/30">
-                    Zero Environment Variables Required
-                  </span>
-                  <span className="px-2 py-0.5 rounded-full text-[9px] font-mono bg-purple-500/15 text-purple-300 border border-purple-400/30">
-                    Firestore Cloud DB & Server Vault
-                  </span>
+          {/* Architecture & Backend Connection Status Banner */}
+          <div className="p-4 rounded-2xl bg-gradient-to-r from-indigo-950/50 via-purple-950/40 to-slate-900/80 border border-indigo-500/25 backdrop-blur-xl flex flex-col gap-4">
+            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+              <div className="flex items-start sm:items-center gap-3.5">
+                <div className={`w-11 h-11 rounded-xl border flex items-center justify-center shrink-0 ${
+                  backendHealth.status === 'healthy'
+                    ? 'bg-emerald-600/20 border-emerald-500/30 text-emerald-400'
+                    : backendHealth.status === 'static_host'
+                    ? 'bg-amber-600/20 border-amber-500/30 text-amber-400'
+                    : 'bg-indigo-600/20 border-indigo-500/30 text-indigo-400'
+                }`}>
+                  <Server className="w-5 h-5" />
                 </div>
-                <p className="text-[11px] text-slate-400 leading-relaxed">
-                  All SMTP credentials, server hosts, connection pooling, and timeouts are configured dynamically via this Admin Console and synced with Cloud Firestore.
-                </p>
+                <div className="space-y-0.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h4 className="text-xs font-bold text-white uppercase tracking-wider font-mono">
+                      Backend Server & Mail Relay Connection
+                    </h4>
+                    <span className={`px-2 py-0.5 rounded-full text-[9px] font-mono font-bold border ${
+                      backendHealth.status === 'healthy'
+                        ? 'bg-emerald-500/15 text-emerald-300 border-emerald-400/30'
+                        : backendHealth.status === 'static_host'
+                        ? 'bg-amber-500/15 text-amber-300 border-amber-400/30'
+                        : 'bg-indigo-500/15 text-indigo-300 border-indigo-400/30'
+                    }`}>
+                      {backendHealth.status === 'healthy' && '🟢 Node.js Backend Active'}
+                      {backendHealth.status === 'static_host' && '⚠️ Static Host (No Node.js)'}
+                      {backendHealth.status === 'checking' && '🔄 Checking API Endpoint...'}
+                      {backendHealth.status === 'error' && '❌ Backend Offline'}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full text-[9px] font-mono bg-purple-500/15 text-purple-300 border border-purple-400/30">
+                      Firestore & SMTP Sync
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    {backendHealth.details || 'All SMTP credentials and socket handlers communicate with your Node.js backend server.'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => checkBackendHealth()}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/10 text-white text-xs font-medium cursor-pointer"
+                >
+                  <RefreshCw className={`w-3 h-3 ${backendHealth.status === 'checking' ? 'animate-spin' : ''}`} />
+                  <span>Ping Server</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowHostingGuide(!showHostingGuide)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-950/60 hover:bg-indigo-900/60 border border-indigo-700/40 text-indigo-300 text-xs font-medium cursor-pointer"
+                >
+                  <HelpCircle className="w-3 h-3" />
+                  <span>{showHostingGuide ? 'Hide Hosting Setup' : 'Hosting & Proxy Setup'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('templates')}
+                  className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-lg shadow-indigo-600/20 transition-all cursor-pointer"
+                >
+                  <Palette className="w-3.5 h-3.5" />
+                  <span>Template Editor</span>
+                </button>
               </div>
             </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={() => setActiveTab('templates')}
-                className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-lg shadow-indigo-600/20 transition-all cursor-pointer"
-              >
-                <Palette className="w-3.5 h-3.5" />
-                <span>Open Template Editor</span>
-              </button>
+
+            {/* Custom Backend API URL Override Configuration */}
+            <div className="p-3.5 rounded-xl bg-slate-950/60 border border-white/10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+              <div className="flex-1 w-full space-y-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
+                    <Globe className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>Backend API Base URL</span>
+                    <span className="text-[10px] text-slate-500 font-normal">(Leave blank to use current origin / same-host proxy)</span>
+                  </label>
+                  {customApiUrl && (
+                    <button
+                      type="button"
+                      onClick={() => handleSaveBackendUrl('')}
+                      className="text-[10px] text-rose-400 hover:text-rose-300 underline cursor-pointer"
+                    >
+                      Reset to Default Origin
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={customApiUrl}
+                    onChange={(e) => setCustomApiUrl(e.target.value)}
+                    placeholder="e.g. https://ais-dev-gcdyq3rgswqtgkxcjbfmqt-4552824319.us-west2.run.app"
+                    className="flex-1 px-3 py-1.5 rounded-lg bg-slate-900 border border-white/10 text-white text-xs font-mono focus:border-indigo-500 focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleSaveBackendUrl(customApiUrl)}
+                    className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shrink-0 cursor-pointer"
+                  >
+                    Save & Connect
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSaveBackendUrl('https://ais-dev-gcdyq3rgswqtgkxcjbfmqt-4552824319.us-west2.run.app')}
+                    className="px-2.5 py-1.5 rounded-lg bg-purple-950/60 hover:bg-purple-900/70 border border-purple-700/50 text-purple-300 text-[11px] font-mono shrink-0 cursor-pointer"
+                    title="Connect to AI Studio Cloud Backend"
+                  >
+                    ⚡ Use Cloud Backend
+                  </button>
+                </div>
+              </div>
             </div>
+
+            {/* Collapsible Full-Stack Hosting & Reverse Proxy Guide */}
+            {showHostingGuide && (
+              <div className="p-4 rounded-xl bg-slate-950/80 border border-white/10 space-y-3 animate-fadeIn text-xs">
+                <div className="flex items-center justify-between">
+                  <h5 className="font-bold text-white uppercase tracking-wider font-mono flex items-center gap-2">
+                    <FileCode2 className="w-4 h-4 text-indigo-400" />
+                    How to Host Full-Stack (Frontend + Node Backend)
+                  </h5>
+                  <span className="text-[10px] text-slate-400 font-mono">Port 3000 • Express + Vite</span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="p-3 rounded-lg bg-slate-900 border border-white/5 space-y-1.5">
+                    <div className="font-semibold text-emerald-400">1. Cloud Run / VPS / Docker</div>
+                    <p className="text-[11px] text-slate-300">
+                      Deploy the entire project container. It automatically compiles the frontend and starts the Express backend on port 3000:
+                    </p>
+                    <pre className="p-2 rounded bg-black/60 text-[10px] font-mono text-slate-300 overflow-x-auto">
+                      npm run build && npm start
+                    </pre>
+                  </div>
+                  <div className="p-3 rounded-lg bg-slate-900 border border-white/5 space-y-1.5">
+                    <div className="font-semibold text-indigo-400">2. Nginx Reverse Proxy</div>
+                    <p className="text-[11px] text-slate-300">
+                      If running behind Nginx on a VPS or custom domain, proxy all <code className="text-purple-300">/api/</code> routes to port 3000:
+                    </p>
+                    <pre className="p-2 rounded bg-black/60 text-[10px] font-mono text-slate-300 overflow-x-auto">
+{`location /api/ {
+  proxy_pass http://127.0.0.1:3000;
+  proxy_set_header Host $host;
+}`}
+                    </pre>
+                  </div>
+                  <div className="p-3 rounded-lg bg-slate-900 border border-white/5 space-y-1.5">
+                    <div className="font-semibold text-amber-400">3. Vercel / Netlify (Static Host)</div>
+                    <p className="text-[11px] text-slate-300">
+                      If hosting only the static <code className="text-purple-300">dist/</code> on Vercel/Netlify, paste your Cloud Run Backend URL above or set <code className="text-purple-300">VITE_API_URL</code>.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => handleSaveBackendUrl('https://ais-dev-gcdyq3rgswqtgkxcjbfmqt-4552824319.us-west2.run.app')}
+                      className="mt-1 w-full py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-[11px] font-semibold cursor-pointer"
+                    >
+                      Connect Cloud Run Backend Now
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -1667,6 +1846,28 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                             ? `Message-ID: ${trialValidationResult.messageId} • Host socket handshake confirmed on ${smtpHost}:${smtpPort}`
                             : trialValidationResult.error}
                         </div>
+                        {!trialValidationResult.success && (trialValidationResult.error?.includes('Backend API route not found') || trialValidationResult.error?.includes('404')) && (
+                          <div className="text-[11px] bg-amber-950/40 border border-amber-500/30 rounded-xl p-3 mt-2 text-amber-200 space-y-2">
+                            <div className="font-semibold text-amber-300 flex items-center gap-1.5">
+                              <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                              <span>Static Website Hosting Detected</span>
+                            </div>
+                            <p className="text-[10px] text-slate-300">
+                              Your domain is serving static files without the Node.js Express backend. Click below to connect to the active Cloud Run backend server, or deploy with Node.js on port 3000.
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                handleSaveBackendUrl('https://ais-dev-gcdyq3rgswqtgkxcjbfmqt-4552824319.us-west2.run.app');
+                                setTrialValidationResult(null);
+                              }}
+                              className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-[11px] cursor-pointer flex items-center gap-1.5 shadow-md shadow-amber-500/20"
+                            >
+                              <Zap className="w-3.5 h-3.5" />
+                              <span>Auto-Connect Cloud Backend & Retry</span>
+                            </button>
+                          </div>
+                        )}
                         {!trialValidationResult.success && trialValidationResult.error?.includes('BadCredentials') && (
                           <div className="text-[11px] bg-rose-900/30 border border-rose-500/20 rounded-lg p-2 mt-2 text-rose-300">
                             <strong>💡 Gmail Tip:</strong> Use a 16-character App Password from{' '}

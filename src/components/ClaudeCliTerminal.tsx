@@ -14,6 +14,7 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { TerminalSessionCommandResult } from '../types';
+import { resolveApiUrl } from '../lib/firebaseClient';
 
 interface ClaudeCliTerminalProps {
   subscriptionEmail?: string;
@@ -47,7 +48,7 @@ export const ClaudeCliTerminal: React.FC<ClaudeCliTerminalProps> = ({
 
     setIsExecuting(true);
     try {
-      const res = await fetch('/api/credentials/subscription/cli-exec', {
+      const res = await fetch(resolveApiUrl('/api/credentials/subscription/cli-exec'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ command: cmd }),

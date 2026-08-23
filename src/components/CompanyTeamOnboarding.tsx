@@ -43,6 +43,7 @@ import {
   saveSmtpSettingsToFirestore,
   loadSmtpSettingsFromFirestore
 } from '../lib/firebase';
+import { resolveApiUrl } from '../lib/firebaseClient';
 import { User } from 'firebase/auth';
 
 const AVAILABLE_MODELS = [
@@ -203,7 +204,7 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
 
   const checkSmtpStatus = async () => {
     try {
-      const res = await fetch('/api/admin/smtp');
+      const res = await fetch(resolveApiUrl('/api/admin/smtp'));
       if (res.ok) {
         const data = await res.json();
         if (data.settings) {
@@ -410,7 +411,7 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
   const handleSendMemberInviteEmail = async (member: any, team: TeamFirestore) => {
     setDispatchingMemberId(member.id);
     try {
-      const res = await fetch('/api/admin/smtp/send-test', {
+      const res = await fetch(resolveApiUrl('/api/admin/smtp/send-test'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -561,7 +562,7 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
     setIsTestingSmtp(true);
     setQuickSmtpNotice(null);
     try {
-      const res = await fetch('/api/admin/smtp/verify', {
+      const res = await fetch(resolveApiUrl('/api/admin/smtp/verify'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -615,7 +616,7 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
 
     try {
       // 1. Save to server memory vault
-      const res = await fetch('/api/admin/smtp', {
+      const res = await fetch(resolveApiUrl('/api/admin/smtp'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),

@@ -23,6 +23,7 @@ import {
   recordAuditLogToFirestore, 
   auth 
 } from '../../lib/firebase';
+import { resolveApiUrl } from '../../lib/firebaseClient';
 
 export interface PlatformGlobalConfig {
   maintenanceMode: boolean;
@@ -80,7 +81,7 @@ export const AdminPlatformConfigPortal: React.FC = () => {
 
   useEffect(() => {
     // Fetch live config from server
-    fetch('/api/admin/platform-config')
+    fetch(resolveApiUrl('/api/admin/platform-config'))
       .then(res => res.json())
       .then(data => {
         if (data && data.config) {
@@ -103,7 +104,7 @@ export const AdminPlatformConfigPortal: React.FC = () => {
 
       // Persist to server
       const token = auth.currentUser ? await auth.currentUser.getIdToken().catch(() => '') : '';
-      await fetch('/api/admin/platform-config', {
+      await fetch(resolveApiUrl('/api/admin/platform-config'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

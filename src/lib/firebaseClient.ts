@@ -22,7 +22,44 @@ export function onAuthChange(callback: (user: User | null) => void): () => void 
   return onAuthChanged(callback);
 }
 
+export function getApiBaseUrl(): string {
+  try {
+    const custom = localStorage.getItem("whyor_backend_api_url");
+    if (custom && custom.trim()) {
+      return custom.trim().replace(/\/+$/, "");
+    }
+  } catch (e) {}
+  const envUrl = (import.meta as any).env?.VITE_API_URL;
+  if (envUrl && typeof envUrl === "string" && envUrl.trim()) {
+    return envUrl.trim().replace(/\/+$/, "");
+  }
+  return "";
+}
+
+export function setApiBaseUrl(url: string): void {
+  try {
+    const cleaned = url ? url.trim().replace(/\/+$/, "") : "";
+    if (cleaned) {
+      localStorage.setItem("whyor_backend_api_url", cleaned);
+    } else {
+      localStorage.removeItem("whyor_backend_api_url");
+    }
+  } catch (e) {}
+}
+
+export function resolveApiUrl(url: string): string {
+  if (url.startsWith("http://") || url.startsWith("https://")) {
+    return url;
+  }
+  const base = getApiBaseUrl();
+  if (base && url.startsWith("/")) {
+    return `${base}${url}`;
+  }
+  return url;
+}
+
 export async function authedFetch(url: string, options: RequestInit = {}): Promise<Response> {
+  const resolvedUrl = resolveApiUrl(url);
   const token = await getIdToken();
   const headers = new Headers(options.headers);
   if (token) {
@@ -51,7 +88,7 @@ export async function authedFetch(url: string, options: RequestInit = {}): Promi
   if (options.body && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
-  return fetch(url, { ...options, headers });
+  return fetch(resolvedUrl, { ...options, headers });
 }
 
 export async function safeFetchJson<T = any>(url: string, options: RequestInit = {}): Promise<{ ok: boolean; status: number; data: T; error?: string }> {
