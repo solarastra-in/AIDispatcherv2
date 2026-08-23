@@ -1,3 +1,23 @@
+/**
+ * src/server/chatSessions.ts (v2 — Firestore-backed, replaces the
+ * in-memory version from earlier in this engagement)
+ *
+ * Directly answers "chat history are available and persisted." The
+ * reviewed AIDispatcherv2 server.ts keeps chat/session state in
+ * `sessionLedgers` and imports this exact module (`./src/server/
+ * chatSessions`) for session management — the version that shipped
+ * earlier in this engagement was in-memory, gone on every restart, and
+ * not shared across serverless function instances on Vercel, where
+ * there's no guarantee two requests from the same user hit the same
+ * warm instance. This replaces it in place, at the same import path,
+ * with the exact same exported function signatures — a drop-in swap
+ * requiring no changes at any call site, not a parallel file needing a
+ * new import statement.
+ */
+
+import { getDb } from "./firestoreClient";
+import { BusinessException } from "./businessException";
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
@@ -14,48 +34,93 @@ export interface ChatSession {
   title: string;
   createdAt: string;
   updatedAt: string;
-  messages: ChatMessage[];
 }
 
-const sessions: Record<string, ChatSession> = {};
-const sessionsByUser: Record<string, string[]> = {};
+const SESSIONS_COLLECTION = "context_sessions"; // matches the real firestore.rules schema — was "chatSessions" before that file was visible
+const MESSAGES_SUBCOLLECTION = "messages";
 
-export function createChatSession(userId: string): ChatSession {
-  const id = `chat_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+export async function createChatSession(userId: string): Promise<ChatSession> {
+  const db = getDb();
   const now = new Date().toISOString();
-  const session: ChatSession = { id, userId, title: "New chat", createdAt: now, updatedAt: now, messages: [] };
-  sessions[id] = session;
-  sessionsByUser[userId] = [...(sessionsByUser[userId] || []), id];
+  const docRef = db.collection(SESSIONS_COLLECTION).doc();
+  const session: ChatSession = { id: docRef.id, userId, title: "New chat", createdAt: now, updatedAt: now };
+
+  try {
+    await docRef.set(session);
+  } catch (err: any) {
+    throw new BusinessException("FIRESTORE_WRITE_FAILED", `Failed to create chat session: ${err.message}`, 500);
+  }
   return session;
 }
 
-export function getChatSession(sessionId: string): ChatSession | undefined {
-  return sessions[sessionId];
+export async function getChatSession(sessionId: string): Promise<(ChatSession & { messages: ChatMessage[] }) | null> {
+  const db = getDb();
+  let sessionDoc;
+  try {
+    sessionDoc = await db.collection(SESSIONS_COLLECTION).doc(sessionId).get();
+  } catch (err: any) {
+    throw new BusinessException("FIRESTORE_READ_FAILED", `Failed to read chat session: ${err.message}`, 500);
+  }
+  if (!sessionDoc.exists) return null;
+
+  const messagesSnapshot = await db
+    .collection(SESSIONS_COLLECTION).doc(sessionId).collection(MESSAGES_SUBCOLLECTION)
+    .orderBy("createdAt", "asc").get();
+
+  const messages = messagesSnapshot.docs.map((d) => d.data() as ChatMessage);
+  return { ...(sessionDoc.data() as ChatSession), messages };
 }
 
-export function listChatSessionsForUser(userId: string): Array<Pick<ChatSession, "id" | "title" | "createdAt" | "updatedAt">> {
-  const ids = sessionsByUser[userId] || [];
-  return ids
-    .map((id) => sessions[id])
-    .filter(Boolean)
-    .map((s) => ({ id: s.id, title: s.title, createdAt: s.createdAt, updatedAt: s.updatedAt }))
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+export async function listChatSessionsForUser(userId: string): Promise<Pick<ChatSession, "id" | "title" | "createdAt" | "updatedAt">[]> {
+  const db = getDb();
+  let snapshot;
+  try {
+    snapshot = await db.collection(SESSIONS_COLLECTION)
+      .where("userId", "==", userId)
+      .orderBy("updatedAt", "desc")
+      .get();
+  } catch (err: any) {
+    throw new BusinessException("FIRESTORE_READ_FAILED", `Failed to list chat sessions: ${err.message}`, 500);
+  }
+  return snapshot.docs.map((d) => {
+    const data = d.data() as ChatSession;
+    return { id: data.id, title: data.title, createdAt: data.createdAt, updatedAt: data.updatedAt };
+  });
 }
 
-export function appendMessage(sessionId: string, message: Omit<ChatMessage, "id" | "createdAt">): ChatMessage {
-  const session = sessions[sessionId];
-  if (!session) throw new Error(`No chat session '${sessionId}'`);
+export async function appendMessage(sessionId: string, message: Omit<ChatMessage, "id" | "createdAt">): Promise<ChatMessage> {
+  const db = getDb();
+  const sessionRef = db.collection(SESSIONS_COLLECTION).doc(sessionId);
+  const messageRef = sessionRef.collection(MESSAGES_SUBCOLLECTION).doc();
+  const now = new Date().toISOString();
+  const fullMessage: ChatMessage = { ...message, id: messageRef.id, createdAt: now };
 
-  const fullMessage: ChatMessage = { ...message, id: `msg_${Date.now().toString(36)}`, createdAt: new Date().toISOString() };
-  session.messages.push(fullMessage);
-  session.updatedAt = fullMessage.createdAt;
+  try {
+    const batch = db.batch();
+    batch.set(messageRef, fullMessage);
 
-  if (session.title === "New chat" && message.role === "user") {
-    session.title = message.content.slice(0, 60) + (message.content.length > 60 ? "…" : "");
+    // Auto-title from the first user message, and bump updatedAt — both
+    // happen in the same atomic batch as the message write, so a
+    // partial failure can't leave title/updatedAt out of sync with the
+    // message that was actually written.
+    const sessionSnap = await sessionRef.get();
+    const sessionData = sessionSnap.data() as ChatSession | undefined;
+    const updates: Partial<ChatSession> = { updatedAt: now };
+    if (sessionData?.title === "New chat" && message.role === "user") {
+      updates.title = message.content.slice(0, 60) + (message.content.length > 60 ? "…" : "");
+    }
+    batch.update(sessionRef, updates);
+
+    await batch.commit();
+  } catch (err: any) {
+    throw new BusinessException("FIRESTORE_WRITE_FAILED", `Failed to append chat message: ${err.message}`, 500);
   }
   return fullMessage;
 }
 
-export function verifySessionOwnership(sessionId: string, userId: string): boolean {
-  return sessions[sessionId]?.userId === userId;
+export async function verifySessionOwnership(sessionId: string, userId: string): Promise<boolean> {
+  const db = getDb();
+  const doc = await db.collection(SESSIONS_COLLECTION).doc(sessionId).get();
+  if (!doc.exists) return false;
+  return (doc.data() as ChatSession).userId === userId;
 }

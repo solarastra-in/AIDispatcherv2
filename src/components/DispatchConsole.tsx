@@ -154,9 +154,21 @@ export const DispatchConsole: React.FC<DispatchConsoleProps> = ({
   const [isQuotaModalOpen, setIsQuotaModalOpen] = useState<QuotaExhaustionData | null>(null);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [feedbackNotice, setFeedbackNotice] = useState<string | null>(null);
+  const [isFullScreen, setIsFullScreen] = useState<boolean>(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Keyboard shortcut to exit full screen
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isFullScreen) {
+        setIsFullScreen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isFullScreen]);
 
   // Auto-scroll to bottom of conversation
   useEffect(() => {
@@ -519,7 +531,11 @@ export const DispatchConsole: React.FC<DispatchConsoleProps> = ({
   const hasDispatched = messages.length > 0;
 
   return (
-    <div className="flex h-[calc(100vh-5.5rem)] min-h-[640px] w-full overflow-hidden bg-slate-950 text-slate-100 rounded-3xl border border-white/10 shadow-2xl relative">
+    <div className={`flex w-full overflow-hidden bg-slate-950 text-slate-100 transition-all duration-200 ${
+      isFullScreen 
+        ? 'fixed inset-0 z-50 h-screen rounded-none border-none shadow-none' 
+        : 'h-[calc(100vh-5.5rem)] min-h-[640px] rounded-3xl border border-white/10 shadow-2xl relative'
+    }`}>
       
       {/* 1. COLLAPSIBLE CONVERSATION HISTORY SIDEBAR */}
       <div 
@@ -726,6 +742,20 @@ export const DispatchConsole: React.FC<DispatchConsoleProps> = ({
                 <span className="hidden sm:inline">{isStudioDockOpen ? 'Split View Active' : 'Show Studio Dock'}</span>
               </button>
             )}
+
+            {/* Fullscreen / Full-Size Toggle */}
+            <button
+              onClick={() => setIsFullScreen(!isFullScreen)}
+              className={`p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl text-xs font-mono transition-all border cursor-pointer flex items-center gap-1.5 ${
+                isFullScreen
+                  ? 'bg-orange-500/20 text-orange-300 border-orange-500/40 shadow-sm'
+                  : 'bg-slate-900/80 text-slate-400 border-white/10 hover:text-slate-200'
+              }`}
+              title={isFullScreen ? 'Exit Full Screen [Esc]' : 'Make Chat Window Full Size'}
+            >
+              {isFullScreen ? <Minimize2 className="w-3.5 h-3.5 text-orange-400" /> : <Maximize2 className="w-3.5 h-3.5 text-orange-400" />}
+              <span className="hidden sm:inline">{isFullScreen ? 'Exit Full Size [Esc]' : 'Full Size'}</span>
+            </button>
           </div>
         </div>
 

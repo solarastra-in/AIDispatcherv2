@@ -64,6 +64,10 @@ import { runRelay } from "./src/server/relay";
 import { buildMultimodalContent } from "./src/server/multimodalInput";
 import { preprocessFiles, preprocessSingleFile, type PreprocessResult } from "./src/server/preprocessing/pipeline";
 import { requireCapability, resolveCapabilities, resolvePersona, type Persona, type Capability } from "./src/server/permissions";
+import { BusinessException, businessExceptionHandler } from "./src/server/businessException";
+import { getCatalogModels, addCatalogModel, updateCatalogModelStatus } from "./src/server/persistence/catalogPersistence";
+import { computePlatformTotals, recordDispatchLedgerEntry } from "./src/server/persistence/platformAnalytics";
+import { getSmtpSettings, saveSmtpSettings, recordEmailLog, listEmailLogs, getCompanyCredential, saveCompanyCredential, listCompanyCredentials } from "./src/server/persistence/settingsPersistence";
 
 const app = express();
 const PORT = 3000;
@@ -646,8 +650,9 @@ async function callDirectProviderAPI(
 
   // Handle local proxy bridge if active for subscription
   if (hasSub && targetCred?.localProxyUrl && targetCred?.proxyStatus === "running") {
+    let res: Response;
     try {
-      const res = await fetch(`${targetCred.localProxyUrl}/chat/completions`, {
+      res = await fetch(`${targetCred.localProxyUrl}/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -655,24 +660,36 @@ async function callDirectProviderAPI(
           messages: [{ role: "user", content: prompt }],
         }),
       });
-      if (res.ok) {
-        const data: any = await res.json();
-        const text = data.choices?.[0]?.message?.content || "";
-        const latencyMs = Date.now() - start;
-        return {
-          text,
-          inputTokens: Math.ceil(prompt.split(/\s+/).length * 1.35),
-          outputTokens: Math.ceil(text.split(/\s+/).length * 1.35),
-          latencyMs,
-          provider,
-          model: modelId,
-          directBilled: false,
-          rawStatus: `200 OK (${provider.toUpperCase()} Subscription Flat $0.00/token)`,
-        };
-      }
-    } catch (proxyErr) {
-      console.warn(`Local proxy bridge notice for ${provider}:`, proxyErr);
+    } catch (proxyErr: any) {
+      throw new BusinessException(
+        "LOCAL_PROXY_UNREACHABLE",
+        `Your configured local proxy for ${targetCred.providerDisplayName || provider} at ${targetCred.localProxyUrl} is unreachable (${proxyErr.message}). Verify the proxy is running, or switch this provider to a direct API key in Company Settings.`,
+        502
+      );
     }
+
+    if (res.ok) {
+      const data: any = await res.json();
+      const text = data.choices?.[0]?.message?.content || "";
+      const latencyMs = Date.now() - start;
+      return {
+        text,
+        inputTokens: Math.ceil(prompt.split(/\s+/).length * 1.35),
+        outputTokens: Math.ceil(text.split(/\s+/).length * 1.35),
+        latencyMs,
+        provider,
+        model: modelId,
+        directBilled: false,
+        rawStatus: `200 OK (${provider.toUpperCase()} Subscription Flat $0.00/token)`,
+      };
+    }
+
+    const errBody = await res.text().catch(() => "");
+    throw new BusinessException(
+      "LOCAL_PROXY_UNREACHABLE",
+      `Your configured local proxy for ${targetCred.providerDisplayName || provider} returned an error (${res.status}): ${errBody.slice(0, 300)}`,
+      502
+    );
   }
 
   // 1. Google Gemini
@@ -3408,7 +3425,7 @@ app.post("/api/models/availability", (req, res) => {
 });
 
 // 2. Chat Sessions Management
-app.get("/api/sessions", (req, res) => {
+app.get("/api/sessions", async (req, res) => {
   const email = resolveAuthenticatedEmail(req) || "guest@whyor.in";
   let user = getUserByEmail(email);
   if (!user) {
@@ -3421,11 +3438,11 @@ app.get("/api/sessions", (req, res) => {
       createdByUserId: null,
     });
   }
-  const list = listChatSessionsForUser(user.id);
+  const list = await listChatSessionsForUser(user.id);
   res.json(list);
 });
 
-app.get("/api/chat/sessions", (req, res) => {
+app.get("/api/chat/sessions", async (req, res) => {
   const email = resolveAuthenticatedEmail(req) || "guest@whyor.in";
   let user = getUserByEmail(email);
   if (!user) {
@@ -3438,23 +3455,22 @@ app.get("/api/chat/sessions", (req, res) => {
       createdByUserId: null,
     });
   }
-  let list = listChatSessionsForUser(user.id);
+  let list = await listChatSessionsForUser(user.id);
   if (list.length === 0) {
-    const defaultSession = createChatSession(user.id);
-    defaultSession.title = "General AI Dispatch & Routing";
-    appendMessage(defaultSession.id, {
+    const defaultSession = await createChatSession(user.id);
+    await appendMessage(defaultSession.id, {
       role: "assistant",
       content: "Welcome to WhyOr Dispatch Workspace! You can enter any prompt below, compare models with WhyOr Corroborate, or run sequential multi-model refinement with WhyOr Relay.",
       modelUsed: "gemini-2.5-flash",
       providerUsed: "google",
       tokensUsed: 42,
     });
-    list = listChatSessionsForUser(user.id);
+    list = await listChatSessionsForUser(user.id);
   }
   res.json({ sessions: list });
 });
 
-app.post("/api/sessions", (req, res) => {
+app.post("/api/sessions", async (req, res) => {
   const email = resolveAuthenticatedEmail(req) || "guest@whyor.in";
   let user = getUserByEmail(email);
   if (!user) {
@@ -3467,14 +3483,11 @@ app.post("/api/sessions", (req, res) => {
       createdByUserId: null,
     });
   }
-  const session = createChatSession(user.id);
-  if (req.body.title) {
-    session.title = req.body.title;
-  }
+  const session = await createChatSession(user.id);
   res.status(201).json(session);
 });
 
-app.post("/api/chat/sessions", (req, res) => {
+app.post("/api/chat/sessions", async (req, res) => {
   const email = resolveAuthenticatedEmail(req) || "guest@whyor.in";
   let user = getUserByEmail(email);
   if (!user) {
@@ -3487,17 +3500,14 @@ app.post("/api/chat/sessions", (req, res) => {
       createdByUserId: null,
     });
   }
-  const session = createChatSession(user.id);
-  if (req.body.title) {
-    session.title = req.body.title;
-  }
+  const session = await createChatSession(user.id);
   res.status(201).json(session);
 });
 
-app.get("/api/sessions/:id", (req, res) => {
+app.get("/api/sessions/:id", async (req, res) => {
   const email = resolveAuthenticatedEmail(req) || "guest@whyor.in";
   const user = getUserByEmail(email);
-  const session = getChatSession(req.params.id);
+  const session = await getChatSession(req.params.id);
   if (!session) return res.status(404).json({ error: "Session not found" });
   if (user && session.userId !== user.id && !isSuperAdminEmail(email) && email !== "guest@whyor.in") {
     return res.status(403).json({ error: "Forbidden" });
@@ -3505,10 +3515,10 @@ app.get("/api/sessions/:id", (req, res) => {
   res.json(session);
 });
 
-app.get("/api/chat/sessions/:sessionId", (req, res) => {
+app.get("/api/chat/sessions/:sessionId", async (req, res) => {
   const email = resolveAuthenticatedEmail(req) || "guest@whyor.in";
   const user = getUserByEmail(email);
-  const session = getChatSession(req.params.sessionId);
+  const session = await getChatSession(req.params.sessionId);
   if (!session) return res.status(404).json({ error: "Session not found" });
   if (user && session.userId !== user.id && !isSuperAdminEmail(email) && email !== "guest@whyor.in") {
     return res.status(403).json({ error: "Forbidden" });
@@ -4297,6 +4307,9 @@ app.delete("/api/admin/assistant/company/:companyId", (req, res) => {
   clearCompanyAssistantOverride(req.params.companyId);
   res.json({ success: true, message: "Company override removed, reverting to portal default." });
 });
+
+// Register BusinessException and error handler
+app.use(businessExceptionHandler);
 
 // ----------------------------------------------------
 // VITE MIDDLEWARE & SERVER STARTUP
