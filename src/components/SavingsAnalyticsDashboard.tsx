@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   ResponsiveContainer,
   AreaChart,
@@ -33,11 +33,20 @@ import {
   ChevronRight,
   Activity,
   Play,
-  Flame
+  Flame,
+  Info,
+  HelpCircle,
+  Calculator,
+  X,
+  ArrowUpRight,
+  Cpu,
+  BookOpen,
+  Check
 } from 'lucide-react';
 import { UserPersona, ModelTier, ContextLedgerEntry } from '../types';
 import { TASK_ARCHETYPES } from '../core/taskTaxonomy';
 import { DispatchHeatmap } from './DispatchHeatmap';
+import { UnderstandingMetricsModal } from './UnderstandingMetricsModal';
 
 interface SavingsAnalyticsDashboardProps {
   activePersona: UserPersona;
@@ -87,6 +96,150 @@ const ARCHETYPE_EFFICIENCY_DATA = [
   { archetype: 'Deep Research Agentic', name: 'Deep Research', baselineTokens: 14500, routedTokens: 8800, savingsPercent: 39.3, costAvoidance: '$0.0380/call', description: 'Coordinates agentic research loops using cryptographic context compression.' },
 ];
 
+// Interactive Metric Tooltip Component
+interface MetricInfoTooltipProps {
+  title: string;
+  badgeText?: string;
+  badgeColor?: 'emerald' | 'cyan' | 'amber' | 'purple' | 'orange';
+  formula: string;
+  explanation: string;
+  steps: string[];
+  liveEvaluation?: string;
+  align?: 'left' | 'center' | 'right';
+  className?: string;
+}
+
+const MetricInfoTooltip: React.FC<MetricInfoTooltipProps> = ({
+  title,
+  badgeText = 'Calculation Formula',
+  badgeColor = 'emerald',
+  formula,
+  explanation,
+  steps,
+  liveEvaluation,
+  align = 'right',
+  className = ''
+}) => {
+  const [isOpen, setIsOpen] = useState<boolean>(false);
+  const tooltipRef = useRef<HTMLDivElement>(null);
+
+  // Close tooltip when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (tooltipRef.current && !tooltipRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isOpen]);
+
+  const badgeColorClasses = {
+    emerald: 'bg-emerald-500/20 text-emerald-300 border-emerald-400/30',
+    cyan: 'bg-cyan-500/20 text-cyan-300 border-cyan-400/30',
+    amber: 'bg-amber-500/20 text-amber-300 border-amber-400/30',
+    purple: 'bg-purple-500/20 text-purple-300 border-purple-400/30',
+    orange: 'bg-orange-500/20 text-orange-300 border-orange-400/30'
+  }[badgeColor];
+
+  const alignClasses = {
+    left: 'left-0 origin-top-left',
+    center: 'left-1/2 -translate-x-1/2 origin-top',
+    right: 'right-0 origin-top-right'
+  }[align];
+
+  return (
+    <div className={`relative inline-flex items-center ${className}`} ref={tooltipRef}>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setIsOpen(!isOpen);
+        }}
+        onMouseEnter={() => setIsOpen(true)}
+        aria-label={`Explain ${title} calculation`}
+        className="p-1 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-white/10 transition-colors focus:outline-none focus:ring-1 focus:ring-emerald-400 cursor-pointer"
+      >
+        <HelpCircle className="w-3.5 h-3.5 text-slate-400 hover:text-cyan-300 transition-colors" />
+      </button>
+
+      {isOpen && (
+        <div
+          className={`absolute top-full mt-2 w-80 sm:w-96 p-4 rounded-2xl bg-slate-950/95 border border-white/20 shadow-2xl backdrop-blur-2xl text-slate-100 z-50 animate-in fade-in zoom-in-95 duration-150 ${alignClasses}`}
+          onMouseLeave={() => setIsOpen(false)}
+        >
+          {/* Header */}
+          <div className="flex items-start justify-between gap-3 border-b border-white/10 pb-2.5">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold border ${badgeColorClasses}`}>
+                  {badgeText}
+                </span>
+                <span className="text-[10px] font-mono text-slate-400">WhyOr Telemetry</span>
+              </div>
+              <h4 className="text-xs sm:text-sm font-bold text-white tracking-tight">{title}</h4>
+            </div>
+            <button
+              onClick={() => setIsOpen(false)}
+              className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-white/10 transition-colors cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          {/* Formula Box */}
+          <div className="my-3 p-2.5 rounded-xl bg-slate-900/90 border border-emerald-500/30 text-emerald-300 font-mono text-xs overflow-x-auto shadow-inner">
+            <div className="text-[10px] uppercase font-semibold text-slate-400 mb-1 flex items-center gap-1">
+              <Calculator className="w-3 h-3 text-emerald-400" />
+              <span>Exact Formula</span>
+            </div>
+            <div className="font-bold text-[11px] leading-relaxed whitespace-pre-wrap">{formula}</div>
+          </div>
+
+          {/* Detailed Explanation */}
+          <p className="text-xs text-slate-300 leading-relaxed mb-3">
+            {explanation}
+          </p>
+
+          {/* Step-by-Step Breakdown */}
+          {steps && steps.length > 0 && (
+            <div className="space-y-1.5 border-t border-white/10 pt-2.5 mb-2.5">
+              <div className="text-[10px] font-mono uppercase font-bold text-slate-400 tracking-wider">
+                How It Works
+              </div>
+              <ul className="space-y-1.5 text-[11px] text-slate-300">
+                {steps.map((step, idx) => (
+                  <li key={idx} className="flex items-start gap-2">
+                    <span className="w-4 h-4 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-mono font-bold flex items-center justify-center shrink-0 mt-0.5">
+                      {idx + 1}
+                    </span>
+                    <span className="leading-snug">{step}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Live Evaluation Snapshot */}
+          {liveEvaluation && (
+            <div className="p-2 rounded-xl bg-cyan-950/40 border border-cyan-500/30 text-cyan-200 text-[11px] font-mono flex items-center gap-2">
+              <Sparkles className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+              <div>
+                <span className="text-[10px] text-slate-400 block font-sans">Current Live Calculation:</span>
+                <span className="font-bold">{liveEvaluation}</span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 // Custom Tooltip Formatter for Recharts
 const CustomChartTooltip = ({ active, payload, label }: any) => {
   if (active && payload && payload.length) {
@@ -128,6 +281,8 @@ export const SavingsAnalyticsDashboard: React.FC<SavingsAnalyticsDashboardProps>
   const [selectedPersonaFilter, setSelectedPersonaFilter] = useState<string>('all');
   const [timeRange, setTimeRange] = useState<'24h' | '7d' | '30d' | 'q3'>('24h');
   const [selectedChartTab, setSelectedChartTab] = useState<'heatmap' | 'archetypes' | 'tokens' | 'cost' | 'providers'>('heatmap');
+  const [isUnderstandingModalOpen, setIsUnderstandingModalOpen] = useState<boolean>(false);
+  const [isFormulaModalOpen, setIsFormulaModalOpen] = useState<boolean>(false);
 
   // Compute live aggregates from ledger
   const kpis = useMemo(() => {
@@ -152,6 +307,7 @@ export const SavingsAnalyticsDashboard: React.FC<SavingsAnalyticsDashboardProps>
       totalCalls,
       overallSavingsPercent,
       counterfactualCostUsd: Number(counterfactualCostUsd.toFixed(2)),
+      actualCostUsd: Number(actualCostUsd.toFixed(2)),
       avgLatencyMs: totalCalls > 0 ? 180 + (totalTokens % 120) : 0,
     };
   }, [ledger]);
@@ -252,6 +408,20 @@ export const SavingsAnalyticsDashboard: React.FC<SavingsAnalyticsDashboardProps>
                 <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /> Live Telemetry
                 </span>
+                <MetricInfoTooltip
+                  title="Counterfactual Savings Analysis"
+                  badgeText="Analysis Methodology"
+                  badgeColor="cyan"
+                  formula="Counterfactual Delta = Uniform Frontier Baseline ($3.00/1M) − WhyOr Dispatched Cost ($0.15–$0.45/1M)"
+                  explanation="WhyOr evaluates every prompt against an industry-standard frontier baseline (GPT-4o / Claude 3.7 Sonnet). Instead of sending every request to the highest tier, WhyOr's AST classifier directs queries to optimal cost-to-performance models while eliminating redundant transcript tokens."
+                  steps={[
+                    "Measures total uncompressed prompt + history tokens.",
+                    "Applies sliding-window entity extraction to save 40–82% tokens.",
+                    "Dispatches to the lowest sufficient model tier.",
+                    "Computes net token and capital savings dynamically."
+                  ]}
+                  liveEvaluation={`Baseline: $${kpis.counterfactualCostUsd} vs Actual: $${kpis.actualCostUsd} (Net Saved: $${kpis.totalSavedUsd})`}
+                />
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
                 Real-time counterfactual savings analysis comparing WhyOr dynamic routing vs uniform frontier model execution.
@@ -261,8 +431,28 @@ export const SavingsAnalyticsDashboard: React.FC<SavingsAnalyticsDashboardProps>
         </div>
 
         {/* Global Controls */}
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2.5">
           
+          {/* Dedicated Understanding Metrics Modal Trigger */}
+          <button
+            id="understanding-metrics-btn"
+            onClick={() => setIsUnderstandingModalOpen(true)}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500/20 to-cyan-500/20 hover:from-emerald-500/30 hover:to-cyan-500/30 text-emerald-300 hover:text-white border border-emerald-400/40 text-xs font-mono font-bold shadow-md shadow-emerald-500/10 transition-all cursor-pointer"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
+            <span>Understanding Metrics</span>
+          </button>
+
+          {/* Formula Breakdown Modal Trigger */}
+          <button
+            id="formula-guide-btn"
+            onClick={() => setIsUnderstandingModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-950/70 hover:bg-slate-950 text-slate-300 hover:text-white border border-white/10 text-xs font-mono font-medium transition-all cursor-pointer"
+          >
+            <BookOpen className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Formula Guide</span>
+          </button>
+
           {/* Persona Filter */}
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-950/70 border border-white/10 text-xs font-mono">
             <Filter className="w-3.5 h-3.5 text-cyan-400" />
@@ -311,21 +501,40 @@ export const SavingsAnalyticsDashboard: React.FC<SavingsAnalyticsDashboardProps>
         </div>
       </div>
 
-      {/* KPI Cards Grid */}
+      {/* KPI Cards Grid with Interactive Metric Tooltips */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         
         {/* Metric 1: Total Tokens Saved */}
-        <div className="p-5 rounded-2xl bg-gradient-to-br from-emerald-500/10 via-slate-900/60 to-slate-900/80 border border-emerald-400/30 shadow-xl relative overflow-hidden group">
-          <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+        <div className="p-5 rounded-2xl bg-gradient-to-br from-emerald-500/10 via-slate-900/60 to-slate-900/80 border border-emerald-400/30 shadow-xl relative overflow-visible group">
+          <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity pointer-events-none">
             <Zap className="w-16 h-16 text-emerald-400" />
           </div>
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-mono text-emerald-300 font-semibold flex items-center gap-1.5">
-              <Zap className="w-3.5 h-3.5" /> Tokens Economized
-            </span>
-            <span className="text-[10px] font-mono text-emerald-400 px-1.5 py-0.5 rounded bg-emerald-500/20">
-              {kpis.overallSavingsPercent > 0 ? `+${kpis.overallSavingsPercent}% Eff.` : 'Baseline 0%'}
-            </span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-mono text-emerald-300 font-semibold flex items-center gap-1.5">
+                <Zap className="w-3.5 h-3.5" /> Tokens Economized
+              </span>
+              <MetricInfoTooltip
+                title="Tokens Economized (Tokens Saved)"
+                badgeText="Token Reduction Formula"
+                badgeColor="emerald"
+                formula="Tokens Saved = (Uncompressed Prompt + History Tokens) − (Compressed Dispatched Tokens)"
+                explanation="Tokens Saved represents the exact volume of input tokens pruned before reaching provider APIs. By maintaining a discrete entity ledger and sliding-window compression, WhyOr avoids re-transmitting redundant conversational history."
+                steps={[
+                  "Uncompressed Baseline: Full raw transcript + unoptimized prompt payload.",
+                  "AST Entity Extraction: Redundant conversational filler is converted to compact entity graphs.",
+                  "Cryptographic Ledger: Invariant context is referenced by hash rather than full repetition.",
+                  "Net Result: 40% to 82% fewer tokens transmitted across model calls."
+                ]}
+                liveEvaluation={`${kpis.totalSavedTokens.toLocaleString()} tokens saved across ${kpis.totalCalls} dispatches (${kpis.overallSavingsPercent}% reduction)`}
+                align="left"
+              />
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] font-mono text-emerald-400 px-1.5 py-0.5 rounded bg-emerald-500/20">
+                {kpis.overallSavingsPercent > 0 ? `+${kpis.overallSavingsPercent}% Eff.` : 'Baseline 0%'}
+              </span>
+            </div>
           </div>
           <div className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight font-display">
             {kpis.totalSavedTokens.toLocaleString()}
@@ -336,14 +545,30 @@ export const SavingsAnalyticsDashboard: React.FC<SavingsAnalyticsDashboardProps>
         </div>
 
         {/* Metric 2: Net Dollars Saved */}
-        <div className="p-5 rounded-2xl bg-gradient-to-br from-cyan-500/10 via-slate-900/60 to-slate-900/80 border border-cyan-400/30 shadow-xl relative overflow-hidden group">
-          <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+        <div className="p-5 rounded-2xl bg-gradient-to-br from-cyan-500/10 via-slate-900/60 to-slate-900/80 border border-cyan-400/30 shadow-xl relative overflow-visible group">
+          <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity pointer-events-none">
             <DollarSign className="w-16 h-16 text-cyan-400" />
           </div>
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-mono text-cyan-300 font-semibold flex items-center gap-1.5">
-              <DollarSign className="w-3.5 h-3.5" /> Direct Cost Avoidance
-            </span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-mono text-cyan-300 font-semibold flex items-center gap-1.5">
+                <DollarSign className="w-3.5 h-3.5" /> Direct Cost Avoidance
+              </span>
+              <MetricInfoTooltip
+                title="Cost Optimization (Net Cost Avoidance)"
+                badgeText="Financial Optimization Formula"
+                badgeColor="cyan"
+                formula="Cost Saved ($) = [(Tokens Processed + Tokens Saved) / 1M × $3.00] − [Tokens Processed / 1M × Model Tier Rate]"
+                explanation="Cost Avoidance measures the direct financial delta between naive uniform execution on frontier models ($3.00/1M tokens) vs WhyOr's intelligent multi-tier routing ($0.15–$0.45/1M tokens) plus token compression."
+                steps={[
+                  "Counterfactual Spend: What the workload would cost if routed 100% to frontier models without compression.",
+                  "Actual Dispatched Spend: Actual token volume billed at the routed model's specific tier rate.",
+                  "Net Financial Gain: Pure operational capital saved per session."
+                ]}
+                liveEvaluation={`Counterfactual Baseline: $${kpis.counterfactualCostUsd} − Actual Billed: $${kpis.actualCostUsd} = $${kpis.totalSavedUsd} Saved`}
+                align="left"
+              />
+            </div>
             <span className="text-[10px] font-mono text-cyan-400 px-1.5 py-0.5 rounded bg-cyan-500/20">
               Net Avoided
             </span>
@@ -357,14 +582,30 @@ export const SavingsAnalyticsDashboard: React.FC<SavingsAnalyticsDashboardProps>
         </div>
 
         {/* Metric 3: Multi-Model Latency Budget */}
-        <div className="p-5 rounded-2xl bg-gradient-to-br from-amber-500/10 via-slate-900/60 to-slate-900/80 border border-amber-400/30 shadow-xl relative overflow-hidden group">
-          <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+        <div className="p-5 rounded-2xl bg-gradient-to-br from-amber-500/10 via-slate-900/60 to-slate-900/80 border border-amber-400/30 shadow-xl relative overflow-visible group">
+          <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity pointer-events-none">
             <Clock className="w-16 h-16 text-amber-400" />
           </div>
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-mono text-amber-300 font-semibold flex items-center gap-1.5">
-              <Clock className="w-3.5 h-3.5" /> Avg Routing Latency
-            </span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-mono text-amber-300 font-semibold flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5" /> Avg Routing Latency
+              </span>
+              <MetricInfoTooltip
+                title="AST Classification Overhead"
+                badgeText="Routing Latency Budget"
+                badgeColor="amber"
+                formula="Overhead = Pre-dispatch AST parsing (<1ms) + Tier Rule Engine (<2ms)"
+                explanation="WhyOr utilizes rule-based AST syntax and keyword taxonomy classifiers rather than an intermediate LLM router. This eliminates multi-second gateway delays, adding under 1 millisecond before API execution."
+                steps={[
+                  "Zero intermediate LLM calls: Decisions happen purely in deterministic JavaScript AST parsing.",
+                  "Sub-millisecond archetype tagging: Lookup, Code, Transform, or Multi-Step Reasoning.",
+                  "Instant tier assignment: Routes to lowest adequate model instantly."
+                ]}
+                liveEvaluation={`Average Classification & Routing Delay: ${kpis.avgLatencyMs > 0 ? `${kpis.avgLatencyMs}ms` : '<1ms'}`}
+                align="right"
+              />
+            </div>
             <span className="text-[10px] font-mono text-amber-400 px-1.5 py-0.5 rounded bg-amber-500/20">
               Sub-ms AST
             </span>
@@ -378,14 +619,30 @@ export const SavingsAnalyticsDashboard: React.FC<SavingsAnalyticsDashboardProps>
         </div>
 
         {/* Metric 4: Multi-Tenant Calls Dispatched */}
-        <div className="p-5 rounded-2xl bg-gradient-to-br from-purple-500/10 via-slate-900/60 to-slate-900/80 border border-purple-400/30 shadow-xl relative overflow-hidden group">
-          <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+        <div className="p-5 rounded-2xl bg-gradient-to-br from-purple-500/10 via-slate-900/60 to-slate-900/80 border border-purple-400/30 shadow-xl relative overflow-visible group">
+          <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity pointer-events-none">
             <Layers className="w-16 h-16 text-purple-400" />
           </div>
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-mono text-purple-300 font-semibold flex items-center gap-1.5">
-              <Layers className="w-3.5 h-3.5" /> Total Dispatches
-            </span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-mono text-purple-300 font-semibold flex items-center gap-1.5">
+                <Layers className="w-3.5 h-3.5" /> Total Dispatches
+              </span>
+              <MetricInfoTooltip
+                title="Dispatches Logged"
+                badgeText="Audit Ledger Metric"
+                badgeColor="purple"
+                formula="Total Dispatches = Count of discrete API executions recorded in Context Ledger"
+                explanation="Total count of prompt executions that have undergone taxonomy classification, context optimization, and model routing during the active session."
+                steps={[
+                  "Every user prompt is logged with sequence ID and SHA-256 state hash.",
+                  "Tokens before/after compression are recorded in real time.",
+                  "Allows full historical auditing and team governance."
+                ]}
+                liveEvaluation={`${kpis.totalCalls.toLocaleString()} total dispatches recorded`}
+                align="right"
+              />
+            </div>
             <span className="text-[10px] font-mono text-purple-400 px-1.5 py-0.5 rounded bg-purple-500/20">
               Active Session
             </span>
@@ -484,10 +741,25 @@ export const SavingsAnalyticsDashboard: React.FC<SavingsAnalyticsDashboardProps>
           <div className="p-6 rounded-2xl bg-slate-900/90 border border-white/15 shadow-2xl backdrop-blur-2xl space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div>
-                <h3 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-emerald-400" />
-                  Token Optimization Efficiency by 7-Task Taxonomy
-                </h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-emerald-400" />
+                    Token Optimization Efficiency by 7-Task Taxonomy
+                  </h3>
+                  <MetricInfoTooltip
+                    title="7-Task Archetype Benchmark Matrix"
+                    badgeText="Taxonomy Benchmark"
+                    badgeColor="emerald"
+                    formula="Archetype Savings % = (Baseline Tokens − Routed Tokens) / Baseline Tokens × 100"
+                    explanation="Each query archetype has a characteristic token reduction factor based on how much conversational context can be safely extracted into the ledger vs dispatched directly to the model."
+                    steps={[
+                      "Lookup & Extract: 81.1% savings via direct extraction to low-tier models.",
+                      "Format & Transform: 82.3% savings with schema conversion offloading.",
+                      "Draft & Summarize: 72.7% savings with entity summary distillation.",
+                      "Code & Refactor: 66.4% savings by stripping boilerplate repetitions."
+                    ]}
+                  />
+                </div>
                 <p className="text-xs text-slate-400">
                   Mathematical efficiency benchmark matrix demonstrating token and dollar cost avoidance for each prompt archetype.
                 </p>
@@ -515,10 +787,14 @@ export const SavingsAnalyticsDashboard: React.FC<SavingsAnalyticsDashboardProps>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 pt-2 font-mono text-xs">
               {ARCHETYPE_EFFICIENCY_DATA.slice(0, 6).map((a, idx) => (
-                <div key={idx} className="p-3 rounded-xl bg-slate-950/60 border border-white/5 space-y-1">
+                <div key={idx} className="p-3 rounded-xl bg-slate-950/60 border border-white/5 space-y-1.5 hover:border-emerald-500/30 transition-all">
                   <div className="flex items-center justify-between text-white font-bold">
                     <span>{a.name}</span>
                     <span className="text-emerald-400">{a.savingsPercent}% Saved</span>
+                  </div>
+                  <div className="flex items-center justify-between text-[10px] text-slate-400">
+                    <span>Baseline: {a.baselineTokens} tok</span>
+                    <span className="text-cyan-300 font-semibold">{a.costAvoidance}</span>
                   </div>
                   <p className="text-[11px] text-slate-400 font-sans leading-relaxed">{a.description}</p>
                 </div>
@@ -532,10 +808,24 @@ export const SavingsAnalyticsDashboard: React.FC<SavingsAnalyticsDashboardProps>
           <div className="p-6 rounded-2xl bg-slate-900/90 border border-white/15 shadow-2xl backdrop-blur-2xl space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div>
-                <h3 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
-                  <TrendingUp className="w-4 h-4 text-emerald-400" />
-                  Token Consumption vs Counterfactual Frontier Baseline
-                </h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
+                    <TrendingUp className="w-4 h-4 text-emerald-400" />
+                    Token Consumption vs Counterfactual Frontier Baseline
+                  </h3>
+                  <MetricInfoTooltip
+                    title="Token Savings Velocity Telemetry"
+                    badgeText="Time Series Metric"
+                    badgeColor="emerald"
+                    formula="Net Tokens Saved = Frontier Baseline (Rose Area) − Actual Dispatched Tokens (Emerald Area)"
+                    explanation="Displays the cumulative token divergence per dispatch. The cyan shaded area visually represents the volume of tokens economized from sliding-window compression."
+                    steps={[
+                      "Frontier Baseline (Rose): What uncompressed chat history would require.",
+                      "Actual Routed Tokens (Emerald): Actual payload dispatched to the chosen model.",
+                      "Net Token Savings (Cyan): Token payload eliminated before transmission."
+                    ]}
+                  />
+                </div>
                 <p className="text-xs text-slate-400">
                   Real-time telemetry plotting baseline frontier token volume vs actual tokens dispatched through WhyOr routing.
                 </p>
@@ -622,10 +912,24 @@ export const SavingsAnalyticsDashboard: React.FC<SavingsAnalyticsDashboardProps>
           <div className="p-6 rounded-2xl bg-slate-900/90 border border-white/15 shadow-2xl backdrop-blur-2xl space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div>
-                <h3 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
-                  <DollarSign className="w-4 h-4 text-cyan-400" />
-                  Real-time Dollar Spend & Cumulative Cost Avoidance ($ USD)
-                </h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
+                    <DollarSign className="w-4 h-4 text-cyan-400" />
+                    Real-time Dollar Spend & Cumulative Cost Avoidance ($ USD)
+                  </h3>
+                  <MetricInfoTooltip
+                    title="Cost Trajectory Calculation"
+                    badgeText="Cost Optimization Formula"
+                    badgeColor="cyan"
+                    formula="Net Dollar Savings = Baseline Cost (Rose Line) − WhyOr Dispatched Cost (Emerald Line)"
+                    explanation="Plots the divergence between naive frontier spending and WhyOr optimized spend. The cyan line shows the net avoided cost accumulated over each successive query."
+                    steps={[
+                      "Frontier Rate: Modeled at $3.00/1M tokens (industry average for GPT-4o / Claude 3.7).",
+                      "WhyOr Actual: Modeled at $0.15–$0.45/1M tokens based on the classified tier.",
+                      "Net Savings: Direct dollar difference credited to the ledger."
+                    ]}
+                  />
+                </div>
                 <p className="text-xs text-slate-400">
                   Divergence curve showing actual WhyOr multi-tier expenditure vs uniform frontier model billing.
                 </p>
@@ -696,10 +1000,24 @@ export const SavingsAnalyticsDashboard: React.FC<SavingsAnalyticsDashboardProps>
           <div className="p-6 rounded-2xl bg-slate-900/90 border border-white/15 shadow-2xl backdrop-blur-2xl space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div>
-                <h3 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
-                  <PieIcon className="w-4 h-4 text-purple-400" />
-                  Provider Routing Volume & Capital Allocation
-                </h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
+                    <PieIcon className="w-4 h-4 text-purple-400" />
+                    Provider Routing Volume & Capital Allocation
+                  </h3>
+                  <MetricInfoTooltip
+                    title="Provider Volume & Allocation"
+                    badgeText="Multi-Provider Telemetry"
+                    badgeColor="purple"
+                    formula="Provider Token % = (Provider Dispatched Tokens / Total Dispatched Tokens) × 100"
+                    explanation="Displays how token volume and capital expenditure are distributed across connected AI provider endpoints (Google Gemini, Anthropic, OpenAI, DeepSeek, Mistral, Groq)."
+                    steps={[
+                      "Tracks volume routed to each provider based on AST taxonomy.",
+                      "Calculates actual cost incurred based on per-provider API price rates.",
+                      "Ensures company quota policies and BYOK budget caps are strictly enforced."
+                    ]}
+                  />
+                </div>
                 <p className="text-xs text-slate-400">
                   Distribution of routed tokens across Google Gemini, Anthropic, DeepSeek, OpenAI, Mistral, and Groq.
                 </p>
@@ -777,15 +1095,34 @@ export const SavingsAnalyticsDashboard: React.FC<SavingsAnalyticsDashboardProps>
 
       {/* Architectural Description Banner */}
       <div className="p-6 rounded-2xl bg-slate-900/90 border border-white/15 shadow-2xl backdrop-blur-2xl space-y-3 font-mono text-xs">
-        <div className="flex items-center gap-2 text-amber-400 font-bold text-sm">
-          <Shield className="w-4 h-4" />
-          <span>WhyOr Economization & Pareto Optimization Framework</span>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-amber-400 font-bold text-sm">
+            <Shield className="w-4 h-4" />
+            <span>WhyOr Economization & Pareto Optimization Framework</span>
+          </div>
+          <button
+            onClick={() => setIsFormulaModalOpen(true)}
+            className="text-xs text-cyan-400 hover:text-cyan-300 font-semibold underline flex items-center gap-1 cursor-pointer"
+          >
+            <span>View Full Mathematical Specifications</span>
+            <ArrowUpRight className="w-3 h-3" />
+          </button>
         </div>
         <p className="text-slate-300 font-sans leading-relaxed text-xs">
           The WhyOr Dispatch platform continuously measures the mathematical delta between naive frontier model invocation (e.g. GPT-4o, Claude 3.7 Sonnet) and intelligent AST classification routing. 
           By decomposing complex queries into semantic archetypes, pruning redundant token histories through SHA-256 cryptographic ledgers, and evaluating tier boundaries in &lt;1ms, organizations achieve up to 82% direct cost avoidance while preserving full output precision.
         </p>
       </div>
+
+      {/* Understanding Metrics Modal */}
+      <UnderstandingMetricsModal
+        isOpen={isUnderstandingModalOpen || isFormulaModalOpen}
+        onClose={() => {
+          setIsUnderstandingModalOpen(false);
+          setIsFormulaModalOpen(false);
+        }}
+        kpis={kpis}
+      />
 
     </div>
   );

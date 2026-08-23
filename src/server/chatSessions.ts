@@ -77,13 +77,13 @@ export async function listChatSessionsForUser(userId: string): Promise<Pick<Chat
   try {
     snapshot = await db.collection(SESSIONS_COLLECTION)
       .where("userId", "==", userId)
-      .orderBy("updatedAt", "desc")
       .get();
   } catch (err: any) {
     throw new BusinessException("FIRESTORE_READ_FAILED", `Failed to list chat sessions: ${err.message}`, 500);
   }
-  return snapshot.docs.map((d) => {
-    const data = d.data() as ChatSession;
+  const sessions = snapshot.docs.map((d) => d.data() as ChatSession);
+  sessions.sort((a, b) => new Date(b.updatedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.createdAt || 0).getTime());
+  return sessions.map((data) => {
     return { id: data.id, title: data.title, createdAt: data.createdAt, updatedAt: data.updatedAt };
   });
 }

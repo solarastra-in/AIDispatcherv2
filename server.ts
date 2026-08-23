@@ -122,8 +122,7 @@ let smtpSettings: ServerSmtpSettings = {
   socketTimeout: 6000,
   authMethod: "LOGIN",
   preset: "gmail",
-  isVerified: true,
-  lastVerifiedAt: new Date().toISOString(),
+  isVerified: false,
   updatedAt: new Date().toISOString(),
   updatedBy: "SuperAdmin",
 };
@@ -139,19 +138,7 @@ let emailLogs: Array<{
   errorMessage?: string;
   sentAt: string;
   sentBy: string;
-}> = [
-  {
-    id: "mail_init_001",
-    to: "solarastra.in@gmail.com",
-    from: "WhyOr Dispatch AI Enterprise <solarastra.in@gmail.com>",
-    subject: "WhyOr Dispatch System Initialized - Google Auth & Firestore Persistence Ready",
-    emailType: "system_init",
-    status: "sent",
-    messageId: "<init.99281.whyor@smtp.gmail.com>",
-    sentAt: new Date().toISOString(),
-    sentBy: "System Daemon",
-  }
-];
+}> = [];
 
 export interface ServerEmailTemplate {
   id: string;
@@ -371,9 +358,9 @@ let catalogModels = [...INITIAL_AI_MODELS];
 // In-memory ledger storage per session
 const sessionLedgers: Record<string, any[]> = {};
 let dispatchEventsLog: any[] = [];
-let platformTotalTokensRouted = 42800000;
-let platformTotalTokensSaved = 31200000;
-let platformTotalCostSavedUsd = 4820.65;
+let platformTotalTokensRouted = 0;
+let platformTotalTokensSaved = 0;
+let platformTotalCostSavedUsd = 0;
 
 // Company Onboarding Profile & Credentials Vault
 export interface ServerCompanyCredential {
@@ -983,7 +970,11 @@ app.get("/api/models", (req, res) => {
 });
 
 // 3. Catalog: Add new AI model / BYOK tool
-app.post("/api/admin/models", (req, res) => {
+app.post("/api/admin/models", async (req, res) => {
+  const email = resolveAuthenticatedEmail(req);
+  const permCheck = requireCapability(email, "manage_team_models");
+  if (!permCheck.allowed) return res.status(401).json({ error: permCheck.reason });
+
   const { name, provider, providerDisplayName, tier, tierLabel, inputPricePerM, outputPricePerM, contextWindowTokens, capabilities, latencyAvgMs, qualityBenchmarkScore, description, recommendedFor } = req.body;
   
   if (!name || !provider) {
@@ -1010,12 +1001,17 @@ app.post("/api/admin/models", (req, res) => {
     isCustomBYOK: true,
   };
 
+  await addCatalogModel(newModel, email!);
   catalogModels.push(newModel);
   res.status(201).json(newModel);
 });
 
 // 4. Catalog: Update model status
-app.patch("/api/admin/models/:id/status", (req, res) => {
+app.patch("/api/admin/models/:id/status", async (req, res) => {
+  const email = resolveAuthenticatedEmail(req);
+  const permCheck = requireCapability(email, "manage_team_models");
+  if (!permCheck.allowed) return res.status(401).json({ error: permCheck.reason });
+
   const { id } = req.params;
   const { status } = req.body;
   const model = catalogModels.find(m => m.id === id);
@@ -1023,6 +1019,7 @@ app.patch("/api/admin/models/:id/status", (req, res) => {
     return res.status(404).json({ error: "Model not found" });
   }
   model.status = status;
+  await updateCatalogModelStatus(id, status);
   res.json(model);
 });
 
@@ -1079,29 +1076,15 @@ app.get("/api/credentials/profile", (req, res) => {
 
 // Middleware enforcing that users must be fully logged in via Google Auth or completed registration before configuring BYOK
 function requireAuthForBYOK(req: express.Request, res: express.Response, next: express.NextFunction) {
-  const authHeader = req.headers.authorization;
-  const userEmail = (req.headers["x-user-email"] as string) || req.body?.userEmail || req.body?.email || (req.query?.userEmail as string);
-  const authMethod = req.headers["x-auth-method"] as string;
-
-  if (userEmail) {
-    const cleanEmail = userEmail.trim().toLowerCase();
-    if (cleanEmail === "solarastra.in@gmail.com") {
-      return next();
-    }
-    const user = getUserByEmail(cleanEmail);
-    if (user) {
-      return next();
-    }
-    if (authMethod === 'google' || authMethod === 'registration' || authMethod === 'google_oauth' || authHeader) {
-      return next();
-    }
-  } else if (authHeader && authHeader.startsWith("Bearer ") && authHeader.length > 10) {
+  const email = resolveAuthenticatedEmail(req);
+  const permCheck = requireCapability(email, "manage_credentials");
+  if (permCheck.allowed) {
     return next();
   }
 
   return res.status(401).json({
     success: false,
-    error: "Authentication required: You must be fully logged in using Google Auth or have completed account registration before configuring Bring Your Own Key (BYOK) credentials.",
+    error: "Authentication required: sign in with a real, verified session before configuring Bring Your Own Key (BYOK) credentials.",
     code: "AUTH_REQUIRED"
   });
 }
@@ -1876,25 +1859,21 @@ app.post("/api/credentials/verify", requireAuthForBYOK, async (req, res) => {
 
     if (provider === "google") {
       const gKey = keyToTest || process.env.GEMINI_API_KEY;
-      if (gKey) {
-        try {
-          const testAi = new GoogleGenAI({
-            apiKey: gKey,
-            httpOptions: {
-              headers: {
-                "User-Agent": "aistudio-build",
-              },
-            },
-          });
-          // Real live ping call to Gemini
-          await testAi.models.generateContent({
-            model: "gemini-3.7-flash",
-            contents: "Respond with 'OK' for direct connection health check.",
-          });
-        } catch (e: any) {
-          console.warn("Gemini live ping check notice:", e?.message);
-        }
+      if (!gKey) {
+        throw new Error("No Gemini API key available to verify — provide a key or configure GEMINI_API_KEY.");
       }
+      const testAi = new GoogleGenAI({
+        apiKey: gKey,
+        httpOptions: {
+          headers: {
+            "User-Agent": "aistudio-build",
+          },
+        },
+      });
+      await testAi.models.generateContent({
+        model: "gemini-3.7-flash",
+        contents: "Respond with 'OK' for direct connection health check.",
+      });
       detectedModels = ["gemini-3.7-flash", "gemini-3.1-pro-preview", "gemini-3.1-flash-lite"];
     } else if (provider === "openai") {
       const url = `${baseUrl || "https://api.openai.com/v1"}/models`;
@@ -2170,30 +2149,30 @@ app.post("/api/admin/smtp", (req, res) => {
 });
 
 // 2b. Sync SMTP from Firestore / Client Vault
-app.post("/api/admin/smtp/sync-firestore", (req, res) => {
+app.post("/api/admin/smtp/sync-firestore", async (req, res) => {
+  const email = resolveAuthenticatedEmail(req);
+  const permCheck = requireCapability(email, "manage_credentials");
+  if (!permCheck.allowed) return res.status(401).json({ success: false, error: permCheck.reason });
+
   const { settings } = req.body;
+  const current = await getSmtpSettings();
+  const updates: Partial<typeof current> = {};
   if (settings && typeof settings === "object") {
-    if (settings.host) smtpSettings.host = settings.host.trim();
-    if (settings.port) smtpSettings.port = Number(settings.port);
-    if (typeof settings.secure === "boolean") smtpSettings.secure = settings.secure;
-    if (typeof settings.requireTls === "boolean") smtpSettings.requireTls = settings.requireTls;
-    if (settings.user) smtpSettings.user = settings.user.trim();
-    if (settings.passRaw) smtpSettings.pass = settings.passRaw.trim();
-    if (settings.fromEmail) smtpSettings.fromEmail = settings.fromEmail.trim();
-    if (settings.fromName) smtpSettings.fromName = settings.fromName.trim();
-    if (settings.replyTo) smtpSettings.replyTo = settings.replyTo.trim();
-    if (typeof settings.pool === "boolean") smtpSettings.pool = settings.pool;
-    if (settings.maxConnections) smtpSettings.maxConnections = Number(settings.maxConnections);
-    if (settings.preset) smtpSettings.preset = settings.preset;
-    if (typeof settings.isVerified === "boolean") smtpSettings.isVerified = settings.isVerified;
-    if (settings.lastVerifiedAt) smtpSettings.lastVerifiedAt = settings.lastVerifiedAt;
-    if (settings.lastTestedAt) smtpSettings.lastTestedAt = settings.lastTestedAt;
-    smtpSettings.updatedAt = new Date().toISOString();
+    if (settings.host) updates.host = settings.host.trim();
+    if (settings.port) updates.port = Number(settings.port);
+    if (typeof settings.secure === "boolean") updates.secure = settings.secure;
+    if (typeof settings.requireTls === "boolean") updates.requireTls = settings.requireTls;
+    if (settings.user) updates.user = settings.user.trim();
+    if (settings.passRaw) updates.pass = settings.passRaw.trim();
+    if (settings.fromEmail) updates.fromEmail = settings.fromEmail.trim();
+    if (settings.fromName) updates.fromName = settings.fromName.trim();
+    if (settings.replyTo) updates.replyTo = settings.replyTo.trim();
   }
+  smtpSettings = await saveSmtpSettings(updates, email!);
 
   res.json({
     success: true,
-    message: "Server SMTP vault synced with Firestore configuration.",
+    message: "SMTP configuration saved to Firestore.",
     settings: {
       ...smtpSettings,
       pass: undefined,
@@ -2563,9 +2542,32 @@ app.delete("/api/admin/smtp/logs", (req, res) => {
 });
 
 // 6. Context Session Storage (With Firestore Cloud vs Transient Toggle)
-app.post("/api/context/save", (req, res) => {
+app.post("/api/context/save", async (req, res) => {
+  const email = resolveAuthenticatedEmail(req);
   const { sessionId, title, persistenceMode = "firestore_cloud", totalTokens, hashChain, blocks } = req.body;
-  
+
+  if (persistenceMode === "firestore_cloud") {
+    if (!email) {
+      return res.status(401).json({ success: false, error: "Sign in required for Firestore-persisted context sessions." });
+    }
+    let session = sessionId ? await getChatSession(sessionId) : null;
+    if (!session) {
+      const user = getUserByEmail(email);
+      if (!user) return res.status(401).json({ success: false, error: "No matching account for this session." });
+      const created = await createChatSession(user.id);
+      session = { ...created, messages: [] };
+    }
+    for (const block of blocks || []) {
+      await appendMessage(session.id, { role: block.role || "user", content: block.content || "" });
+    }
+    return res.json({
+      success: true,
+      persistenceMode,
+      message: "Context session persisted to Firestore.",
+      session: { id: session.id, title: session.title, totalTokens, hashChain },
+    });
+  }
+
   const sessionRecord = {
     id: sessionId || `ctx_${Date.now()}`,
     title: title || "Active Dispatch Session",
@@ -2575,29 +2577,28 @@ app.post("/api/context/save", (req, res) => {
     blocks: blocks || [],
     updatedAt: new Date().toISOString(),
   };
-
-  if (!sessionLedgers[sessionRecord.id]) {
-    sessionLedgers[sessionRecord.id] = [];
-  }
+  if (!sessionLedgers[sessionRecord.id]) sessionLedgers[sessionRecord.id] = [];
   sessionLedgers[sessionRecord.id] = sessionRecord.blocks;
 
   res.json({
     success: true,
     persistenceMode,
-    message: persistenceMode === "firestore_cloud" 
-      ? "Context session persisted to Firestore cloud ledger." 
-      : "Context session cached in transient local scratchpad (No cloud persistence).",
+    message: "Context session cached in transient local scratchpad — will NOT survive a server restart.",
     session: sessionRecord,
   });
 });
 
-app.get("/api/context/sessions", (req, res) => {
+app.get("/api/context/sessions", async (req, res) => {
+  const email = resolveAuthenticatedEmail(req);
+  const user = email ? getUserByEmail(email) : undefined;
+  const firestoreSessions = user ? await listChatSessionsForUser(user.id) : [];
+
   res.json({
     success: true,
-    activeSessions: Object.keys(sessionLedgers).map(id => ({
-      id,
-      blockCount: sessionLedgers[id].length,
-    })),
+    activeSessions: [
+      ...firestoreSessions.map(s => ({ id: s.id, title: s.title, persisted: true })),
+      ...Object.keys(sessionLedgers).map(id => ({ id, blockCount: sessionLedgers[id].length, persisted: false })),
+    ],
   });
 });
 

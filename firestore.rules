@@ -63,9 +63,22 @@ service cloud.firestore {
 
     // ---- Credentials vault (BYOK company API keys) — scoped strictly to
     //      that company's own admin, plus super_admin. This is the
-    //      single most sensitive collection in the whole schema. ----
+    //      single most sensitive collection in the whole schema.
+    //
+    //      FIX: the original combined `read, write: if
+    //      isCompanyAdminOf(resource.data.companyId)` silently blocked
+    //      CREATE operations — `resource` refers to the EXISTING
+    //      document, which doesn't exist yet on create, so this check
+    //      could never pass for a brand-new credential. Currently
+    //      mitigated in practice since this project's architecture
+    //      writes credentials server-side via the Admin SDK (which
+    //      bypasses rules entirely) — but relying on "the client will
+    //      never write directly" is exactly the assumption that caused
+    //      the original `allow read, write: if true` vulnerability this
+    //      whole rules file exists to fix. Split explicitly instead. ----
     match /credentials/{providerId} {
-      allow read, write: if isSuperAdmin() || isCompanyAdminOf(resource.data.companyId);
+      allow read, update, delete: if isSuperAdmin() || isCompanyAdminOf(resource.data.companyId);
+      allow create: if isSuperAdmin() || isCompanyAdminOf(request.resource.data.companyId);
     }
 
     // ---- SMTP settings: super_admin only ----
@@ -117,10 +130,13 @@ service cloud.firestore {
       allow write: if isCompanyAdminOf(companyId) || isSuperAdmin();
     }
 
-    // ---- Teams: same pattern as companies, scoped one level down ----
+    // ---- Teams: same pattern as companies, scoped one level down.
+    //      Same create-vs-existing-document split as credentials above,
+    //      for the same reason. ----
     match /teams/{teamId} {
       allow read: if isSignedIn() && (isMemberOf(resource.data.companyId) || isSuperAdmin());
-      allow write: if isSignedIn() && (isCompanyAdminOf(resource.data.companyId) || isSuperAdmin());
+      allow update, delete: if isSignedIn() && (isCompanyAdminOf(resource.data.companyId) || isSuperAdmin());
+      allow create: if isSignedIn() && (isCompanyAdminOf(request.resource.data.companyId) || isSuperAdmin());
     }
 
     // ---- Email templates: super_admin only (these define what gets
