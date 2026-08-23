@@ -72,6 +72,16 @@ import { getSmtpSettings, saveSmtpSettings, recordEmailLog, listEmailLogs, getCo
 const app = express();
 const PORT = 3000;
 
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
+  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization, x-user-email, x-auth-method, x-session-token");
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
 app.use(express.json({ limit: "10mb" }));
 app.use(firebaseAuthMiddleware);
 
@@ -2399,23 +2409,36 @@ app.post("/api/admin/smtp/sync-firestore", async (req, res) => {
   });
 });
 
+// Helper to normalize and clean SMTP credentials
+function cleanSmtpPassword(pass: string): string {
+  if (!pass) return "";
+  const trimmed = pass.trim();
+  // If it's a 16-char Google App Password formatted with spaces (e.g. "abcd efgh ijkl mnop"), strip spaces
+  if (trimmed.length === 19 && (trimmed.match(/\s/g) || []).length === 3) {
+    return trimmed.replace(/\s+/g, "");
+  }
+  return trimmed;
+}
+
 // 3. Verify SMTP Connection (Handshake verification)
 app.post("/api/admin/smtp/verify", async (req, res) => {
   const { host, port, secure, requireTls, user, pass, connectionTimeout, greetingTimeout } = req.body;
   const start = Date.now();
 
   const testHost = (host && typeof host === "string" ? host.trim() : "") || smtpSettings.host || "smtp.gmail.com";
-  const testPort = Number(port) || smtpSettings.port || 587;
-  // Automatically adjust TLS mode based on standard port conventions
-  const testSecure = testPort === 465 ? true : (testPort === 587 || testPort === 25 ? false : (typeof secure === "boolean" ? secure : false));
+  let testPort = Number(port) || smtpSettings.port || 587;
+  let testSecure = testPort === 465 ? true : (testPort === 587 || testPort === 25 ? false : (typeof secure === "boolean" ? secure : false));
   const testUser = (user && typeof user === "string" ? user.trim() : "") || smtpSettings.user;
-  const testPass = (pass && pass !== "••••••••••••••••") ? pass.trim() : smtpSettings.pass;
+  const rawPass = (pass && pass !== "••••••••••••••••") ? pass.trim() : smtpSettings.pass;
+  const testPass = cleanSmtpPassword(rawPass);
 
-  try {
+  const isGoogle = testHost.toLowerCase().includes("gmail") || testHost.toLowerCase().includes("google");
+
+  const runVerificationAttempt = async (portToUse: number, secureToUse: boolean) => {
     const transporter = nodemailer.createTransport({
       host: testHost,
-      port: testPort,
-      secure: testSecure,
+      port: portToUse,
+      secure: secureToUse,
       auth: testUser && testPass ? {
         user: testUser,
         pass: testPass,
@@ -2428,37 +2451,55 @@ app.post("/api/admin/smtp/verify", async (req, res) => {
       socketTimeout: 6000,
     } as any);
 
-    // Try real handshake with a hard timeout guarantee
-    let verified = false;
-    let handshakeDetails = "";
+    const verifyPromise = transporter.verify();
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`SMTP handshake timed out after 5.5s connecting to ${testHost}:${portToUse}`)), 5500)
+    );
+    await Promise.race([verifyPromise, timeoutPromise]);
+    return `250-SMTP Connection Established (${testHost}:${portToUse} Protocol=${secureToUse ? "SSL/TLS Direct" : "STARTTLS"})`;
+  };
 
+  try {
+    let handshakeDetails = "";
     try {
-      const verifyPromise = transporter.verify();
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error(`SMTP handshake timed out after 5.5s connecting to ${testHost}:${testPort}`)), 5500)
+      handshakeDetails = await runVerificationAttempt(testPort, testSecure);
+    } catch (primaryErr: any) {
+      // If primary port timed out or failed to connect, try the alternative port (587 <-> 465) for Gmail
+      const isConnError = primaryErr.message && (
+        primaryErr.message.includes("timed out") || 
+        primaryErr.message.includes("ETIMEDOUT") || 
+        primaryErr.message.includes("ECONNREFUSED") ||
+        primaryErr.message.includes("Greeting never received")
       );
-      await Promise.race([verifyPromise, timeoutPromise]);
-      verified = true;
-      handshakeDetails = `250-SMTP Connection Established (${testHost}:${testPort} Protocol=${testSecure ? "SSL/TLS Direct" : "STARTTLS"})`;
-    } catch (vErr: any) {
-      if (testPass) {
-        throw vErr;
+
+      if (isGoogle && isConnError) {
+        const fallbackPort = testPort === 587 ? 465 : 587;
+        const fallbackSecure = fallbackPort === 465;
+        try {
+          handshakeDetails = await runVerificationAttempt(fallbackPort, fallbackSecure);
+          testPort = fallbackPort;
+          testSecure = fallbackSecure;
+          handshakeDetails += ` [Auto-switched to Port ${fallbackPort} ${fallbackSecure ? "SSL" : "STARTTLS"}]`;
+        } catch (fallbackErr) {
+          throw primaryErr;
+        }
       } else {
-        // Without pass, test was a port reachability check
-        verified = true;
-        handshakeDetails = `220 ${testHost} ESMTP Server Socket Reachable (Awaiting Authentication Password)`;
+        throw primaryErr;
       }
     }
 
     const latencyMs = Date.now() - start;
     smtpSettings.isVerified = true;
     smtpSettings.lastVerifiedAt = new Date().toISOString();
+    smtpSettings.port = testPort;
+    smtpSettings.secure = testSecure;
 
     res.json({
       success: true,
       latencyMs,
       host: testHost,
       port: testPort,
+      secure: testSecure,
       handshake: handshakeDetails,
       verifiedAt: smtpSettings.lastVerifiedAt,
       message: `SMTP Host '${testHost}:${testPort}' responded with TLS handshake in ${latencyMs}ms. Ready for email delivery.`,
@@ -2549,11 +2590,12 @@ app.post("/api/admin/smtp/send-test", async (req, res) => {
   const start = Date.now();
 
   const activeHost = (host && typeof host === "string" ? host.trim() : "") || smtpSettings.host || "smtp.gmail.com";
-  const activePort = port ? Number(port) : (smtpSettings.port || 587);
+  let activePort = port ? Number(port) : (smtpSettings.port || 587);
   // Auto-resolve secure flag based on standard port defaults to prevent handshake hangs
-  const activeSecure = activePort === 465 ? true : (activePort === 587 || activePort === 25 ? false : (secure !== undefined ? Boolean(secure) : false));
+  let activeSecure = activePort === 465 ? true : (activePort === 587 || activePort === 25 ? false : (secure !== undefined ? Boolean(secure) : false));
   const activeUser = (user && typeof user === "string" ? user.trim() : "") || smtpSettings.user;
-  const activePass = (pass && pass !== "••••••••••••••••") ? pass.trim() : smtpSettings.pass;
+  const rawPass = (pass && pass !== "••••••••••••••••") ? pass.trim() : smtpSettings.pass;
+  const activePass = cleanSmtpPassword(rawPass);
   const activeFromEmail = (fromEmail && typeof fromEmail === "string" ? fromEmail.trim() : "") || smtpSettings.fromEmail || activeUser || "solarastra.in@gmail.com";
   const activeFromName = (fromName && typeof fromName === "string" ? fromName.trim() : "") || smtpSettings.fromName || "WhyOr Dispatch AI Enterprise";
   const activeReplyTo = (replyTo && typeof replyTo === "string" ? replyTo.trim() : "") || smtpSettings.replyTo || activeFromEmail;
@@ -2621,20 +2663,13 @@ app.post("/api/admin/smtp/send-test", async (req, res) => {
     `;
   }
 
-  try {
-    let messageId = `<whyor.${Date.now()}.${Math.random().toString(36).substring(2, 8)}@${activeHost}>`;
-    let deliveredDirectly = false;
+  const isGoogle = activeHost.toLowerCase().includes("gmail") || activeHost.toLowerCase().includes("google");
 
-    if (!activeUser || !activePass) {
-      throw new Error(
-        "SMTP credentials required: Please specify both an SMTP Username (email) and Password/App Password before sending live emails."
-      );
-    }
-
+  const sendAttempt = async (portToUse: number, secureToUse: boolean) => {
     const transporter = nodemailer.createTransport({
       host: activeHost,
-      port: activePort,
-      secure: activeSecure,
+      port: portToUse,
+      secure: secureToUse,
       pool: typeof pool === "boolean" ? pool : (smtpSettings.pool ?? true),
       maxConnections: maxConnections ? Number(maxConnections) : (smtpSettings.maxConnections ?? 5),
       auth: {
@@ -2658,14 +2693,50 @@ app.post("/api/admin/smtp/send-test", async (req, res) => {
       text: finalPlainText,
     });
 
-    // Enforce strict 6.5s timeout guarantee before proxy timeout
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(`SMTP delivery timed out after 6000ms connecting to ${activeHost}:${activePort}`)), 6500)
+      setTimeout(() => reject(new Error(`SMTP delivery timed out after 6000ms connecting to ${activeHost}:${portToUse}`)), 6500)
     );
 
-    const info: any = await Promise.race([sendPromise, timeoutPromise]);
+    return (await Promise.race([sendPromise, timeoutPromise])) as any;
+  };
 
-    messageId = info.messageId || messageId;
+  try {
+    let messageId = `<whyor.${Date.now()}.${Math.random().toString(36).substring(2, 8)}@${activeHost}>`;
+    let deliveredDirectly = false;
+
+    if (!activeUser || !activePass) {
+      throw new Error(
+        "SMTP credentials required: Please specify both an SMTP Username (email) and Password/App Password before sending live emails."
+      );
+    }
+
+    let info: any;
+    try {
+      info = await sendAttempt(activePort, activeSecure);
+    } catch (primaryErr: any) {
+      const isConnError = primaryErr.message && (
+        primaryErr.message.includes("timed out") || 
+        primaryErr.message.includes("ETIMEDOUT") || 
+        primaryErr.message.includes("ECONNREFUSED") ||
+        primaryErr.message.includes("Greeting never received")
+      );
+
+      if (isGoogle && isConnError) {
+        const fallbackPort = activePort === 587 ? 465 : 587;
+        const fallbackSecure = fallbackPort === 465;
+        try {
+          info = await sendAttempt(fallbackPort, fallbackSecure);
+          activePort = fallbackPort;
+          activeSecure = fallbackSecure;
+        } catch (fallbackErr) {
+          throw primaryErr;
+        }
+      } else {
+        throw primaryErr;
+      }
+    }
+
+    messageId = info?.messageId || messageId;
     deliveredDirectly = true;
 
     const durationMs = Date.now() - start;
@@ -2674,6 +2745,8 @@ app.post("/api/admin/smtp/send-test", async (req, res) => {
     smtpSettings.lastTestStatus = "success";
     smtpSettings.isVerified = true;
     smtpSettings.lastVerifiedAt = new Date().toISOString();
+    smtpSettings.port = activePort;
+    smtpSettings.secure = activeSecure;
 
     const newLog = {
       id: `mail_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
@@ -2697,9 +2770,10 @@ app.post("/api/admin/smtp/send-test", async (req, res) => {
       recipient: recipientEmail,
       host: activeHost,
       port: activePort,
+      secure: activeSecure,
       durationMs,
       sentAt: newLog.sentAt,
-      message: `Trial email dispatched to ${recipientEmail} (${durationMs}ms). Configuration validated and ready to save to Firestore.`,
+      message: `Trial email dispatched to ${recipientEmail} (${durationMs}ms via ${activeHost}:${activePort}). Configuration validated and ready to save to Firestore.`,
       log: newLog,
     });
   } catch (err: any) {

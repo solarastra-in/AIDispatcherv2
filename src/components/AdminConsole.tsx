@@ -476,8 +476,10 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
       }
 
       let cleanSnippet = rawText.replace(/<[^>]*>?/gm, ' ').replace(/\s+/g, ' ').trim().slice(0, 180);
-      if (isHtmlError || cleanSnippet.includes('NOT_FOUND') || cleanSnippet.includes('bom1::')) {
-        cleanSnippet = 'Mail Dispatch Service endpoint initializing. Retried connection to server.';
+      if (isHtmlError || res.status === 404) {
+        cleanSnippet = 'Backend API route not found (HTTP 404 / Static Host). When hosting on a custom domain or cloud server, ensure your Node.js backend server (server.ts / npm start) is running and reverse-proxied to handle /api/* requests.';
+      } else if (res.status === 502 || res.status === 504) {
+        cleanSnippet = 'Mail Dispatch Timeout (HTTP 504/502). The server could not establish a connection with the SMTP mail host. Try switching between Port 465 (SSL Direct) and Port 587 (STARTTLS).';
       }
 
       return {
@@ -488,6 +490,8 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
           error: cleanSnippet || `HTTP ${res.status} ${res.statusText || 'Server Error'}`,
           recommendation: res.status === 504 || res.status === 502
             ? 'The mail server took too long to respond. Try switching to Port 465 (SSL Direct) or verify your App Password.'
+            : isHtmlError || res.status === 404
+            ? 'Ensure your hosted website has the full-stack Node.js server running on port 3000 or proxied via Nginx / Cloud Run.'
             : 'Please verify that the SMTP server host is reachable and your credentials / 16-character App Password are correct.',
         },
       };
