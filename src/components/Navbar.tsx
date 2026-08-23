@@ -32,6 +32,7 @@ import { PERSONA_PROFILES } from '../data/mockData';
 import { ROLE_DEFINITIONS, canUserViewPage } from '../utils/permissions';
 import { auth, signInWithGoogle, signOutUser, onAuthChanged } from '../lib/firebase';
 import { User as FirebaseUser } from 'firebase/auth';
+import { UsageMeter } from './UsageMeter';
 
 interface NavbarProps {
   currentTab: string;
@@ -476,6 +477,11 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* Action Buttons & Persona Switcher */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             
+            {/* Usage Meter displaying daily prompt quota and BYOK configuration link */}
+            <UsageMeter 
+              onNavigateToKeys={() => setCurrentTab('credentials')}
+            />
+
             {/* OpenAPI / FastAPI Sandbox Trigger */}
             {onOpenApiExplorer && (
               <button
@@ -782,6 +788,15 @@ export const Navbar: React.FC<NavbarProps> = ({
                     )}
                   </div>
                 </div>
+
+                {/* Usage Meter in Mobile Drawer */}
+                <UsageMeter 
+                  isMobileDrawer={true}
+                  onNavigateToKeys={() => {
+                    setCurrentTab('credentials');
+                    setMobileMenuOpen(false);
+                  }}
+                />
 
                 {/* Section 1: Core Live Hub */}
                 <div className="space-y-1">

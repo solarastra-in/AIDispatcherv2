@@ -338,6 +338,7 @@ export default function App() {
                 models={models}
                 activePersona={activePersona}
                 onNavigateTab={setCurrentTab}
+                onOpenAuthGate={() => setIsAuthGateOpen(true)}
                 onSelectModelForDispatch={(modelId, prompt) => {
                   if (prompt) setPrefilledPrompt(prompt);
                   if (modelId) setPrefilledModelId(modelId);
@@ -362,6 +363,7 @@ export default function App() {
                 activePersona={activePersona}
                 ledger={ledger}
                 onNavigateTab={setCurrentTab}
+                onOpenAuthGate={() => setIsAuthGateOpen(true)}
                 onPrefillPrompt={(p) => {
                   setPrefilledPrompt(p);
                   setCurrentTab('dispatch');
@@ -442,6 +444,7 @@ export default function App() {
             {currentTab === 'examples' && (
               <Examples 
                 onNavigateTab={setCurrentTab}
+                onOpenAuthGate={() => setIsAuthGateOpen(true)}
                 onPrefillPrompt={(prompt, modelId) => {
                   setPrefilledPrompt(prompt);
                   if (modelId) setPrefilledModelId(modelId);
@@ -453,6 +456,7 @@ export default function App() {
             {currentTab === 'workspace' && (
               <Workspace
                 onNavigateTab={setCurrentTab}
+                onOpenAuthGate={() => setIsAuthGateOpen(true)}
               />
             )}
 

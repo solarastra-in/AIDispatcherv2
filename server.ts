@@ -498,6 +498,94 @@ let companyCredentialsVault: Record<string, ServerCompanyCredential> = {
   }
 };
 
+// ==================== GLOBAL PLATFORM CONFIG & DAILY LIMIT GOVERNANCE ====================
+export interface ServerGlobalPlatformConfig {
+  maintenanceMode: boolean;
+  maintenanceMessage: string;
+  circuitBreakerActive: boolean;
+  defaultRoutingMode: 'balanced_pareto' | 'speed_first' | 'frontier_quality' | 'cost_minimum';
+  globalRateLimitRpm: number;
+  maxConcurrencyPerTenant: number;
+  forceGoogleSsoForAdmins: boolean;
+  sessionTimeoutMinutes: number;
+  strictDomainMatchOnly: boolean;
+  defaultNewCompanyQuotaTokens: number;
+  defaultNewCompanyBudgetUsd: number;
+  quotaWarningThresholdPct: number;
+  autoThrottleOnOverQuota: boolean;
+  byokEnvelopeEncryption: 'aes_256_gcm' | 'rsa_4096';
+  allowLocalProxyDaemons: boolean;
+  dailyFreePromptLimit: number;
+}
+
+let serverGlobalPlatformConfig: ServerGlobalPlatformConfig = {
+  maintenanceMode: false,
+  maintenanceMessage: 'WhyOr Dispatch AI is undergoing scheduled optimization upgrades. Dispatches will resume momentarily.',
+  circuitBreakerActive: false,
+  defaultRoutingMode: 'balanced_pareto',
+  globalRateLimitRpm: 1200,
+  maxConcurrencyPerTenant: 40,
+  forceGoogleSsoForAdmins: true,
+  sessionTimeoutMinutes: 60,
+  strictDomainMatchOnly: false,
+  defaultNewCompanyQuotaTokens: 50_000_000,
+  defaultNewCompanyBudgetUsd: 2500,
+  quotaWarningThresholdPct: 80,
+  autoThrottleOnOverQuota: true,
+  byokEnvelopeEncryption: 'aes_256_gcm',
+  allowLocalProxyDaemons: true,
+  dailyFreePromptLimit: 3, // Configurable Daily Free Prompts Limit for users without BYOK keys (default: 3)
+};
+
+// In-memory daily prompt usage tracker map (key: `${userEmailOrId}_${YYYY-MM-DD}`)
+const userDailyPromptTracker = new Map<string, number>();
+
+function getUserTodayKey(userIdentifier: string): string {
+  const todayUtc = new Date().toISOString().slice(0, 10);
+  return `${userIdentifier.toLowerCase().trim()}_${todayUtc}`;
+}
+
+function getUserDailyPromptCount(userIdentifier: string): number {
+  const key = getUserTodayKey(userIdentifier);
+  return userDailyPromptTracker.get(key) || 0;
+}
+
+function incrementUserDailyPromptCount(userIdentifier: string): number {
+  const key = getUserTodayKey(userIdentifier);
+  const current = userDailyPromptTracker.get(key) || 0;
+  const next = current + 1;
+  userDailyPromptTracker.set(key, next);
+  return next;
+}
+
+function checkUserHasConfiguredKeys(userEmail?: string, passedCompanyKeys?: Record<string, any>): boolean {
+  if (userEmail && isSuperAdminEmail(userEmail)) {
+    return true;
+  }
+
+  // 1. Check passed companyKeys in request
+  if (passedCompanyKeys && typeof passedCompanyKeys === 'object') {
+    for (const key of Object.values(passedCompanyKeys)) {
+      if (key && typeof key === 'object') {
+        const apiKey = (key as any).apiKey;
+        const hasSub = (key as any).hasSubscription;
+        if ((typeof apiKey === 'string' && apiKey.trim().length > 0) || hasSub) {
+          return true;
+        }
+      }
+    }
+  }
+
+  // 2. Check server-side companyCredentialsVault
+  for (const cred of Object.values(companyCredentialsVault)) {
+    if (cred && ((cred.apiKey && cred.apiKey.trim().length > 0) || (cred.hasSubscription && cred.status === 'connected') || cred.localProxyUrl)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 // Lazy initialized Gemini Client
 let geminiClient: GoogleGenAI | null = null;
 function getGemini(customKey?: string): GoogleGenAI | null {
@@ -2602,6 +2690,102 @@ app.get("/api/context/sessions", async (req, res) => {
   });
 });
 
+// ==================== USER DAILY USAGE & PLATFORM CONFIG ENDPOINTS ====================
+
+// 7a. Get Current User Daily Limit Status
+app.get("/api/user/daily-limit-status", (req, res) => {
+  const email = resolveAuthenticatedEmail(req);
+  const limit = serverGlobalPlatformConfig.dailyFreePromptLimit || 3;
+
+  if (!email || email === "guest@whyor.in") {
+    return res.json({
+      isAuthenticated: false,
+      isGuest: true,
+      dailyPromptsUsed: 0,
+      dailyPromptLimit: limit,
+      dailyPromptsRemaining: 0,
+      hasConfiguredKeys: false,
+      isUnlimited: false,
+      resetsAt: "00:00 UTC",
+      notice: "Guest visitors have view-only access across all pages. Please sign up to start your 7-day free trial or enter prompts.",
+    });
+  }
+
+  const isSuper = isSuperAdminEmail(email);
+  const hasKeys = isSuper || checkUserHasConfiguredKeys(email);
+  const used = getUserDailyPromptCount(email);
+  const remaining = Math.max(0, limit - used);
+
+  res.json({
+    isAuthenticated: true,
+    isGuest: false,
+    email,
+    isSuperAdmin: isSuper,
+    dailyPromptsUsed: used,
+    dailyPromptLimit: limit,
+    dailyPromptsRemaining: hasKeys ? 999999 : remaining,
+    hasConfiguredKeys: hasKeys,
+    isUnlimited: hasKeys,
+    resetsAt: "00:00 UTC",
+    usedPortalKeys: !hasKeys,
+    notice: hasKeys 
+      ? "Direct BYOK keys or enterprise subscription active: Unlimited prompts available."
+      : `Portal Keys active: ${used}/${limit} free trial prompts used today. Resets daily at 00:00 UTC.`,
+  });
+});
+
+// 7b. Admin Global Platform Config Endpoints
+app.get("/api/admin/platform-config", (req, res) => {
+  res.json({
+    success: true,
+    config: serverGlobalPlatformConfig,
+  });
+});
+
+app.post("/api/admin/platform-config", (req, res) => {
+  const email = resolveAuthenticatedEmail(req);
+  if (!email || !isSuperAdminEmail(email)) {
+    const permCheck = requireCapability(email, "manage_credentials");
+    if (!permCheck.allowed) {
+      return res.status(403).json({ success: false, error: "Only Super Admin or authorized operators can modify global platform controls." });
+    }
+  }
+
+  const incoming = req.body || {};
+  if (typeof incoming.dailyFreePromptLimit === 'number' && incoming.dailyFreePromptLimit >= 0) {
+    serverGlobalPlatformConfig.dailyFreePromptLimit = incoming.dailyFreePromptLimit;
+  }
+  if (typeof incoming.maintenanceMode === 'boolean') {
+    serverGlobalPlatformConfig.maintenanceMode = incoming.maintenanceMode;
+  }
+  if (typeof incoming.maintenanceMessage === 'string') {
+    serverGlobalPlatformConfig.maintenanceMessage = incoming.maintenanceMessage;
+  }
+  if (typeof incoming.circuitBreakerActive === 'boolean') {
+    serverGlobalPlatformConfig.circuitBreakerActive = incoming.circuitBreakerActive;
+  }
+  if (incoming.defaultRoutingMode) {
+    serverGlobalPlatformConfig.defaultRoutingMode = incoming.defaultRoutingMode;
+  }
+  if (typeof incoming.globalRateLimitRpm === 'number') {
+    serverGlobalPlatformConfig.globalRateLimitRpm = incoming.globalRateLimitRpm;
+  }
+  if (typeof incoming.maxConcurrencyPerTenant === 'number') {
+    serverGlobalPlatformConfig.maxConcurrencyPerTenant = incoming.maxConcurrencyPerTenant;
+  }
+  if (typeof incoming.forceGoogleSsoForAdmins === 'boolean') {
+    serverGlobalPlatformConfig.forceGoogleSsoForAdmins = incoming.forceGoogleSsoForAdmins;
+  }
+  if (typeof incoming.sessionTimeoutMinutes === 'number') {
+    serverGlobalPlatformConfig.sessionTimeoutMinutes = incoming.sessionTimeoutMinutes;
+  }
+
+  res.json({
+    success: true,
+    message: "Global platform configuration saved successfully.",
+    config: serverGlobalPlatformConfig,
+  });
+});
 
 // 8. Core Dispatch Endpoint - Route, Execute with AI (Direct Company Keys or Platform), Compress Context, and Hash-Chain
 app.post("/api/dispatch", async (req, res) => {
@@ -2621,6 +2805,36 @@ app.post("/api/dispatch", async (req, res) => {
     maxAutoRetries = 3,
   } = req.body;
 
+  // 1. STRICT ACCESS GATING: Guest users are view-only across all pages
+  const email = resolveAuthenticatedEmail(req);
+  if (!email || email === "guest@whyor.in" || userRole === "guest") {
+    return res.status(401).json({
+      error: "Authentication required. Guest users have view-only access across all pages. Please sign up or sign in to start your 7-day free trial.",
+      requiresAuth: true,
+      code: "GUEST_VIEW_ONLY",
+      businessFriendlyMessage: "Guest visitors can browse all pages and examples in view-only mode. Sign up to execute live prompts."
+    });
+  }
+
+  // 2. KEY & DAILY LIMIT GOVERNANCE:
+  // Check if user has configured BYOK keys / subscription or is SuperAdmin
+  const isSuper = isSuperAdminEmail(email);
+  const hasUserConfiguredKeys = isSuper || checkUserHasConfiguredKeys(email, companyKeys);
+  const dailyLimit = serverGlobalPlatformConfig.dailyFreePromptLimit || 3;
+  const currentDailyUsed = getUserDailyPromptCount(email);
+
+  if (!hasUserConfiguredKeys && currentDailyUsed >= dailyLimit) {
+    return res.status(429).json({
+      error: `Daily free prompt limit reached (${currentDailyUsed}/${dailyLimit} prompts used today). Portal Keys configured by the Super Admin provide up to ${dailyLimit} free trial prompts per day. Configure your own BYOK keys in Company Credentials for unlimited dispatches.`,
+      dailyLimitExceeded: true,
+      dailyPromptsUsed: currentDailyUsed,
+      dailyPromptLimit: dailyLimit,
+      dailyPromptsRemaining: 0,
+      resetsAt: "00:00 UTC",
+      errorType: "daily_trial_exhausted",
+      businessFriendlyMessage: `You have completed your ${dailyLimit} free trial prompts for today using Super Admin Portal Keys. Configure your own BYOK keys in Credentials for unlimited prompts.`
+    });
+  }
 
   if (!prompt || typeof prompt !== "string") {
     return res.status(400).json({ error: "Prompt is required" });
@@ -3319,9 +3533,32 @@ Context decisions and extracted entities will be written to the WhyOr cryptograp
     dispatchEventsLog.shift();
   }
 
+  // Increment usage count for users relying on Super Admin Portal Keys
+  let currentDailyUsageInfo = {
+    dailyPromptsUsed: currentDailyUsed,
+    dailyPromptLimit: dailyLimit,
+    dailyPromptsRemaining: hasUserConfiguredKeys ? 999999 : Math.max(0, dailyLimit - currentDailyUsed),
+    hasConfiguredKeys: hasUserConfiguredKeys,
+    isUnlimited: hasUserConfiguredKeys,
+    usedPortalKeys: !hasUserConfiguredKeys,
+  };
+
+  if (!hasUserConfiguredKeys && email) {
+    const newCount = incrementUserDailyPromptCount(email);
+    currentDailyUsageInfo = {
+      dailyPromptsUsed: newCount,
+      dailyPromptLimit: dailyLimit,
+      dailyPromptsRemaining: Math.max(0, dailyLimit - newCount),
+      hasConfiguredKeys: false,
+      isUnlimited: false,
+      usedPortalKeys: true,
+    };
+  }
+
   res.json({
     dispatchId: `dsp_${Date.now().toString(36)}`,
     sessionId,
+    dailyUsage: currentDailyUsageInfo,
     classification: {
       taskCategory,
       complexityScore: finalScore,
@@ -3639,13 +3876,43 @@ app.post("/api/dispatch/output", async (req, res) => {
     files = [] 
   } = req.body;
   const email = resolveAuthenticatedEmail(req);
-  const user = email ? getUserByEmail(email) : undefined;
   
+  if (!email || email === "guest@whyor.in") {
+    return res.status(401).json({
+      error: "Authentication required. Guest users have view-only access across all pages. Please sign up to start your 7-day free trial or run prompts.",
+      requiresAuth: true,
+      code: "GUEST_VIEW_ONLY",
+      businessFriendlyMessage: "Guest visitors have view-only access across all pages. Please sign up to start your 7-day trial."
+    });
+  }
+
+  const isSuper = isSuperAdminEmail(email);
+  const hasUserConfiguredKeys = isSuper || checkUserHasConfiguredKeys(email);
+  const dailyLimit = serverGlobalPlatformConfig.dailyFreePromptLimit || 3;
+  const currentDailyUsed = getUserDailyPromptCount(email);
+
+  if (!hasUserConfiguredKeys && currentDailyUsed >= dailyLimit) {
+    return res.status(429).json({
+      error: `Daily free prompt limit reached (${currentDailyUsed}/${dailyLimit} prompts used today). Portal Keys configured by the Super Admin provide up to ${dailyLimit} free trial prompts per day. Configure your own BYOK keys in Company Credentials for unlimited dispatches.`,
+      dailyLimitExceeded: true,
+      dailyPromptsUsed: currentDailyUsed,
+      dailyPromptLimit: dailyLimit,
+      resetsAt: "00:00 UTC",
+      errorType: "daily_trial_exhausted",
+      businessFriendlyMessage: `You have completed your ${dailyLimit} free trial prompts for today using Super Admin Portal Keys. Configure your own BYOK keys in Credentials for unlimited prompts.`
+    });
+  }
+
+  const user = email ? getUserByEmail(email) : undefined;
   if (user) {
     const budgetCheck = checkBudget(user.id, user.teamId);
     if (!budgetCheck.allowed) {
       return res.status(402).json({ error: `Budget exceeded: ${budgetCheck.reason}` });
     }
+  }
+
+  if (!hasUserConfiguredKeys) {
+    incrementUserDailyPromptCount(email);
   }
 
   // Resolve target model and provider based on targetModelIds
@@ -3867,6 +4134,14 @@ app.post("/api/dispatch/output", async (req, res) => {
 
 // 5. Corroboration & Diversity
 app.post("/api/corroborate", async (req, res) => {
+  const email = resolveAuthenticatedEmail(req);
+  if (!email || email === "guest@whyor.in") {
+    return res.status(401).json({
+      error: "Authentication required. Guest users have view-only access across all pages. Please sign up or sign in.",
+      requiresAuth: true,
+      code: "GUEST_VIEW_ONLY"
+    });
+  }
   const { prompt, modelA, modelB } = req.body;
   if (!prompt || !modelA || !modelB) {
     return res.status(400).json({ error: "prompt, modelA, and modelB are required" });
@@ -3891,6 +4166,29 @@ app.post("/api/corroborate", async (req, res) => {
 
 app.post("/api/dispatch/corroborate", async (req, res) => {
   const email = resolveAuthenticatedEmail(req);
+  if (!email || email === "guest@whyor.in") {
+    return res.status(401).json({
+      error: "Authentication required. Guest users have view-only access across all pages. Please sign up or sign in.",
+      requiresAuth: true,
+      code: "GUEST_VIEW_ONLY"
+    });
+  }
+
+  const isSuper = isSuperAdminEmail(email);
+  const hasUserConfiguredKeys = isSuper || checkUserHasConfiguredKeys(email);
+  const dailyLimit = serverGlobalPlatformConfig.dailyFreePromptLimit || 3;
+  const currentDailyUsed = getUserDailyPromptCount(email);
+
+  if (!hasUserConfiguredKeys && currentDailyUsed >= dailyLimit) {
+    return res.status(429).json({
+      error: `Daily free prompt limit reached (${currentDailyUsed}/${dailyLimit} prompts used today). Configure BYOK keys in Credentials for unlimited prompts.`,
+      dailyLimitExceeded: true,
+      dailyPromptsUsed: currentDailyUsed,
+      dailyPromptLimit: dailyLimit,
+      errorType: "daily_trial_exhausted",
+    });
+  }
+
   const requester = email ? getUserByEmail(email) : undefined;
   const { prompt, modelA, modelB } = req.body;
 
@@ -3903,6 +4201,10 @@ app.post("/api/dispatch/corroborate", async (req, res) => {
     if (!budgetResult.allowed) {
       return res.status(402).json({ error: `${budgetResult.reason} (Corroboration mode uses ~2x a normal request's budget.)`, blockedBy: budgetResult.blockedBy });
     }
+  }
+
+  if (!hasUserConfiguredKeys) {
+    incrementUserDailyPromptCount(email);
   }
 
   try {
@@ -3938,6 +4240,14 @@ app.get("/api/corroborate/diversity", (req, res) => {
 
 // 6. Multi-Model Relay
 app.post("/api/relay", async (req, res) => {
+  const email = resolveAuthenticatedEmail(req);
+  if (!email || email === "guest@whyor.in") {
+    return res.status(401).json({
+      error: "Authentication required. Guest users have view-only access across all pages. Please sign up or sign in.",
+      requiresAuth: true,
+      code: "GUEST_VIEW_ONLY"
+    });
+  }
   const { prompt, steps, data } = req.body;
   if (!prompt || !Array.isArray(steps) || steps.length === 0) {
     return res.status(400).json({ error: "prompt and steps array are required" });
@@ -3962,6 +4272,29 @@ app.post("/api/relay", async (req, res) => {
 
 app.post("/api/dispatch/relay", async (req, res) => {
   const email = resolveAuthenticatedEmail(req);
+  if (!email || email === "guest@whyor.in") {
+    return res.status(401).json({
+      error: "Authentication required. Guest users have view-only access across all pages. Please sign up or sign in.",
+      requiresAuth: true,
+      code: "GUEST_VIEW_ONLY"
+    });
+  }
+
+  const isSuper = isSuperAdminEmail(email);
+  const hasUserConfiguredKeys = isSuper || checkUserHasConfiguredKeys(email);
+  const dailyLimit = serverGlobalPlatformConfig.dailyFreePromptLimit || 3;
+  const currentDailyUsed = getUserDailyPromptCount(email);
+
+  if (!hasUserConfiguredKeys && currentDailyUsed >= dailyLimit) {
+    return res.status(429).json({
+      error: `Daily free prompt limit reached (${currentDailyUsed}/${dailyLimit} prompts used today). Configure BYOK keys in Credentials for unlimited prompts.`,
+      dailyLimitExceeded: true,
+      dailyPromptsUsed: currentDailyUsed,
+      dailyPromptLimit: dailyLimit,
+      errorType: "daily_trial_exhausted",
+    });
+  }
+
   const requester = email ? getUserByEmail(email) : undefined;
   const { data, instruction, modelChain } = req.body;
 
@@ -3977,6 +4310,10 @@ app.post("/api/dispatch/relay", async (req, res) => {
     if (!budgetResult.allowed) {
       return res.status(402).json({ error: `${budgetResult.reason} (Relay mode costs roughly ${modelChain.length}x a single request's budget.)`, blockedBy: budgetResult.blockedBy });
     }
+  }
+
+  if (!hasUserConfiguredKeys) {
+    incrementUserDailyPromptCount(email);
   }
 
   try {

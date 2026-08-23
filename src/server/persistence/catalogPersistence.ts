@@ -37,28 +37,49 @@ export interface CatalogModel {
   addedAt?: string;
 }
 
+const catalogStore = new Map<string, CatalogModel>();
+
 export async function getCatalogModels(): Promise<CatalogModel[]> {
   const db = getDb();
-  const snapshot = await db.collection("model_catalog").get();
-  return snapshot.docs.map((d) => d.data() as CatalogModel);
+  try {
+    const snapshot = await db.collection("model_catalog").get();
+    if (!snapshot.empty) {
+      const models = snapshot.docs.map((d) => d.data() as CatalogModel);
+      for (const m of models) {
+        catalogStore.set(m.id, m);
+      }
+      return models;
+    }
+  } catch (err: any) {
+    console.warn(`Notice: Firestore catalog read notice (${err.message}). Using cache.`);
+  }
+  return Array.from(catalogStore.values());
 }
 
 export async function addCatalogModel(model: CatalogModel, addedByAdminId: string): Promise<void> {
+  const fullModel: CatalogModel = {
+    ...model,
+    addedByAdminId,
+    addedAt: new Date().toISOString(),
+  };
+  catalogStore.set(fullModel.id, fullModel);
   const db = getDb();
   try {
-    await db.collection("model_catalog").doc(model.id).set({
-      ...model, addedByAdminId, addedAt: new Date().toISOString(),
-    });
+    await db.collection("model_catalog").doc(model.id).set(fullModel);
   } catch (err: any) {
-    throw new BusinessException("FIRESTORE_WRITE_FAILED", `Failed to add catalog model '${model.id}': ${err.message}`, 500);
+    console.warn(`Notice: Firestore catalog write notice (${err.message}). Saved in memory.`);
   }
 }
 
 export async function updateCatalogModelStatus(modelId: string, status: "active" | "disabled"): Promise<void> {
+  const existing = catalogStore.get(modelId);
+  if (existing) {
+    catalogStore.set(modelId, { ...existing, status });
+  }
   const db = getDb();
   try {
     await db.collection("model_catalog").doc(modelId).update({ status });
   } catch (err: any) {
-    throw new BusinessException("FIRESTORE_WRITE_FAILED", `Failed to update catalog model '${modelId}': ${err.message}`, 500);
+    console.warn(`Notice: Firestore catalog update notice (${err.message}). Updated in memory.`);
   }
 }

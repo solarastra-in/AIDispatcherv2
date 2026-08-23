@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import Markdown from 'react-markdown';
 import { 
   AIModel, 
@@ -508,6 +509,7 @@ export const DispatchConsole: React.FC<DispatchConsoleProps> = ({
       console.error('Dispatch error:', err);
     } finally {
       setIsDispatching(false);
+      window.dispatchEvent(new CustomEvent('daily-quota-updated'));
     }
   };
 
@@ -530,10 +532,33 @@ export const DispatchConsole: React.FC<DispatchConsoleProps> = ({
   // Helper for whether we have active dispatched messages in current session
   const hasDispatched = messages.length > 0;
 
-  return (
+  // ESC key handler for full-screen and body scroll locking
+  useEffect(() => {
+    const handleKeyDownEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isFullScreen) {
+        setIsFullScreen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDownEsc);
+    return () => window.removeEventListener('keydown', handleKeyDownEsc);
+  }, [isFullScreen]);
+
+  // Lock body scroll when full-screen is active
+  useEffect(() => {
+    if (isFullScreen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [isFullScreen]);
+
+  const consoleContent = (
     <div className={`flex w-full overflow-hidden bg-slate-950 text-slate-100 transition-all duration-200 ${
       isFullScreen 
-        ? 'fixed inset-0 z-50 h-screen rounded-none border-none shadow-none' 
+        ? 'fixed inset-0 z-[99999] h-screen w-screen rounded-none border-none shadow-none' 
         : 'h-[calc(100vh-5.5rem)] min-h-[640px] rounded-3xl border border-white/10 shadow-2xl relative'
     }`}>
       
@@ -1435,6 +1460,8 @@ export const DispatchConsole: React.FC<DispatchConsoleProps> = ({
       )}
     </div>
   );
+
+  return isFullScreen ? createPortal(consoleContent, document.body) : consoleContent;
 };
 
 export default DispatchConsole;

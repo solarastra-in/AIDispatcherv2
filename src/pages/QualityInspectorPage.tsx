@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { auth } from '../lib/firebaseClient';
 import { 
   Activity, 
   Sparkles, 
@@ -22,7 +23,8 @@ import {
   Sliders,
   Check,
   AlertTriangle,
-  Play
+  Play,
+  Lock
 } from 'lucide-react';
 import { TASK_ARCHETYPES, TaskArchetypeId } from '../core/taskTaxonomy';
 import { QualityModelTracker, BetaDistribution } from '../core/qualityModel';
@@ -36,6 +38,7 @@ interface QualityInspectorPageProps {
   activePersona?: UserPersona;
   onNavigateTab: (tab: string) => void;
   onSelectModelForDispatch?: (modelId: string, prefillPrompt?: string) => void;
+  onOpenAuthGate?: () => void;
 }
 
 export const QualityInspectorPage: React.FC<QualityInspectorPageProps> = ({
@@ -45,6 +48,7 @@ export const QualityInspectorPage: React.FC<QualityInspectorPageProps> = ({
   activePersona,
   onNavigateTab,
   onSelectModelForDispatch,
+  onOpenAuthGate,
 }) => {
   const [selectedArchetype, setSelectedArchetype] = useState<TaskArchetypeId>('multi_step_reasoning');
   const [qualityThreshold, setQualityThreshold] = useState<number>(0.75);
@@ -165,6 +169,23 @@ export const QualityInspectorPage: React.FC<QualityInspectorPageProps> = ({
 
   return (
     <div className="space-y-8 animate-in fade-in pb-16">
+      {/* Guest View-Only Notice Banner */}
+      {!auth.currentUser && (
+        <div className="bg-gradient-to-r from-orange-500/15 via-amber-500/10 to-orange-500/15 border border-orange-500/30 rounded-2xl px-4 py-3 flex items-center justify-between text-xs text-orange-200 shadow-lg">
+          <div className="flex items-center gap-2.5">
+            <Lock className="w-4 h-4 text-orange-400 shrink-0" />
+            <span>
+              <strong>Guest View-Only Mode:</strong> You can inspect all Bayesian Beta posterior curves, archetype rankings, and Thompson sampling mathematics. Sign up with Google to test live prompt routing (3 free daily prompts via Super Admin Portal Keys, or unlimited with BYOK keys).
+            </span>
+          </div>
+          <button
+            onClick={() => onOpenAuthGate ? onOpenAuthGate() : onNavigateTab?.('pricing')}
+            className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-slate-950 font-bold text-xs shadow-md cursor-pointer transition-all shrink-0 ml-3"
+          >
+            Sign In / Free Trial
+          </button>
+        </div>
+      )}
       
       {/* HERO SECTION */}
       <div className="relative rounded-3xl bg-gradient-to-br from-slate-900/90 via-slate-900/95 to-slate-950 border border-white/10 p-6 sm:p-8 backdrop-blur-2xl shadow-2xl overflow-hidden">

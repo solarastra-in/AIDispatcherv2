@@ -47,12 +47,15 @@ import { UserPersona, ModelTier, ContextLedgerEntry } from '../types';
 import { TASK_ARCHETYPES } from '../core/taskTaxonomy';
 import { DispatchHeatmap } from './DispatchHeatmap';
 import { UnderstandingMetricsModal } from './UnderstandingMetricsModal';
+import { auth } from '../lib/firebaseClient';
+import { Lock } from 'lucide-react';
 
 interface SavingsAnalyticsDashboardProps {
   activePersona: UserPersona;
   ledger?: ContextLedgerEntry[];
   onNavigateTab?: (tab: string) => void;
   onPrefillPrompt?: (prompt: string) => void;
+  onOpenAuthGate?: () => void;
 }
 
 // Color palettes for Recharts
@@ -277,6 +280,7 @@ export const SavingsAnalyticsDashboard: React.FC<SavingsAnalyticsDashboardProps>
   ledger = [],
   onNavigateTab,
   onPrefillPrompt,
+  onOpenAuthGate,
 }) => {
   const [selectedPersonaFilter, setSelectedPersonaFilter] = useState<string>('all');
   const [timeRange, setTimeRange] = useState<'24h' | '7d' | '30d' | 'q3'>('24h');
@@ -394,6 +398,23 @@ export const SavingsAnalyticsDashboard: React.FC<SavingsAnalyticsDashboardProps>
 
   return (
     <div className="space-y-6 text-slate-100 font-sans">
+      {/* Guest View-Only Notice Banner */}
+      {!auth.currentUser && (
+        <div className="bg-gradient-to-r from-orange-500/15 via-amber-500/10 to-orange-500/15 border border-orange-500/30 rounded-2xl px-4 py-3 flex items-center justify-between text-xs text-orange-200 shadow-lg">
+          <div className="flex items-center gap-2.5">
+            <Lock className="w-4 h-4 text-orange-400 shrink-0" />
+            <span>
+              <strong>Guest View-Only Mode:</strong> You can inspect all token savings graphs, cost optimization formulas, and archetype breakdowns. Sign in with Google to start dispatching prompts (3 free daily prompts via Super Admin Portal Keys, or unlimited with BYOK keys).
+            </span>
+          </div>
+          <button
+            onClick={() => onOpenAuthGate ? onOpenAuthGate() : onNavigateTab?.('pricing')}
+            className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-slate-950 font-bold text-xs shadow-md cursor-pointer transition-all shrink-0 ml-3"
+          >
+            Sign In / Free Trial
+          </button>
+        </div>
+      )}
       
       {/* Top Header & Filter Controls */}
       <div className="p-6 rounded-2xl bg-slate-900/80 border border-white/15 shadow-2xl backdrop-blur-2xl flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">

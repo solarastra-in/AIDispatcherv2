@@ -7,6 +7,7 @@
  */
 import React, { useState, useEffect, useRef } from "react";
 import { usePageSEO } from "../lib/seo";
+import { auth } from "../lib/firebaseClient";
 import { 
   Cpu, 
   ShieldCheck, 
@@ -33,12 +34,14 @@ import {
   Filter,
   CheckCircle,
   Sliders,
-  Maximize2
+  Maximize2,
+  Lock
 } from "lucide-react";
 
 interface ExamplesProps {
   onNavigateTab?: (tab: string) => void;
   onPrefillPrompt?: (prompt: string, modelId?: string) => void;
+  onOpenAuthGate?: () => void;
 }
 
 const PREPROCESS_ROWS = [
@@ -200,6 +203,7 @@ const SIMULATED_SCENARIOS = [
 export default function Examples({
   onNavigateTab,
   onPrefillPrompt,
+  onOpenAuthGate,
 }: ExamplesProps = {}) {
   const [activeTab, setActiveTab] = useState<'routing' | 'preprocessing' | 'corroborate' | 'relay' | 'compression' | 'ledger'>('routing');
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -346,6 +350,24 @@ export default function Examples({
 
   return (
     <div className="text-slate-100 antialiased selection:bg-orange-500 selection:text-white space-y-10">
+      {/* Guest View-Only Notice Banner */}
+      {!auth.currentUser && (
+        <div className="bg-gradient-to-r from-orange-500/15 via-amber-500/10 to-orange-500/15 border border-orange-500/30 rounded-2xl px-4 py-3 flex items-center justify-between text-xs text-orange-200 shadow-lg">
+          <div className="flex items-center gap-2.5">
+            <Lock className="w-4 h-4 text-orange-400 shrink-0" />
+            <span>
+              <strong>Guest View-Only Mode:</strong> You can explore all architectural examples, token calculators, and inspection payloads. Sign in with Google to run live queries with 3 free daily prompts (powered by Super Admin Portal Keys) or unlimited with BYOK keys.
+            </span>
+          </div>
+          <button
+            onClick={() => onOpenAuthGate ? onOpenAuthGate() : onNavigateTab?.('pricing')}
+            className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-slate-950 font-bold text-xs shadow-md cursor-pointer transition-all shrink-0 ml-3"
+          >
+            Sign In / Free Trial
+          </button>
+        </div>
+      )}
+
       {/* Header Banner */}
       <div className="relative overflow-hidden rounded-3xl bg-gradient-to-b from-slate-900/80 to-slate-950/80 border border-white/10 backdrop-blur-2xl p-8 sm:p-12 shadow-2xl">
         <div className="absolute top-0 right-0 w-80 h-80 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />

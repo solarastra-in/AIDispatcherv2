@@ -40,6 +40,7 @@ export interface PlatformGlobalConfig {
   autoThrottleOnOverQuota: boolean;
   byokEnvelopeEncryption: 'aes_256_gcm' | 'rsa_4096';
   allowLocalProxyDaemons: boolean;
+  dailyFreePromptLimit: number;
 }
 
 const DEFAULT_GLOBAL_CONFIG: PlatformGlobalConfig = {
@@ -57,7 +58,8 @@ const DEFAULT_GLOBAL_CONFIG: PlatformGlobalConfig = {
   quotaWarningThresholdPct: 80,
   autoThrottleOnOverQuota: true,
   byokEnvelopeEncryption: 'aes_256_gcm',
-  allowLocalProxyDaemons: true
+  allowLocalProxyDaemons: true,
+  dailyFreePromptLimit: 3
 };
 
 export const AdminPlatformConfigPortal: React.FC = () => {
@@ -76,17 +78,46 @@ export const AdminPlatformConfigPortal: React.FC = () => {
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [notification, setNotification] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
 
+  useEffect(() => {
+    // Fetch live config from server
+    fetch('/api/admin/platform-config')
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.config) {
+          setConfig(prev => ({
+            ...prev,
+            ...data.config,
+            dailyFreePromptLimit: typeof data.config.dailyFreePromptLimit === 'number' ? data.config.dailyFreePromptLimit : (prev.dailyFreePromptLimit || 3)
+          }));
+        }
+      })
+      .catch(() => {
+        // Fallback to local storage
+      });
+  }, []);
+
   const handleSaveConfig = async () => {
     setIsSaving(true);
     try {
       localStorage.setItem('whyor_global_platform_config', JSON.stringify(config));
+
+      // Persist to server
+      const token = auth.currentUser ? await auth.currentUser.getIdToken().catch(() => '') : '';
+      await fetch('/api/admin/platform-config', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify(config)
+      });
 
       const adminEmail = auth.currentUser?.email || 'Admin Superuser';
       await recordAuditLogToFirestore(
         'Updated Global Platform Configuration',
         'platform_config',
         adminEmail,
-        `Saved platform policies: Maintenance=${config.maintenanceMode}, Routing=${config.defaultRoutingMode}, SSO=${config.forceGoogleSsoForAdmins}, Concurrency=${config.maxConcurrencyPerTenant}.`
+        `Saved platform policies: DailyLimit=${config.dailyFreePromptLimit}, Maintenance=${config.maintenanceMode}, Routing=${config.defaultRoutingMode}, SSO=${config.forceGoogleSsoForAdmins}, Concurrency=${config.maxConcurrencyPerTenant}.`
       );
 
       setNotification({
@@ -422,6 +453,56 @@ export const AdminPlatformConfigPortal: React.FC = () => {
                   />
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+
+        {/* 5. Super Admin Portal Keys & Daily Free Prompt Limit */}
+        <div className="bg-slate-900/70 border border-amber-500/30 rounded-2xl p-6 backdrop-blur-xl space-y-5 lg:col-span-2 shadow-xl shadow-amber-500/5">
+          <div className="flex items-center justify-between border-b border-white/10 pb-3 flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <KeyRound className="w-5 h-5 text-amber-400" />
+              <h3 className="text-sm font-bold text-white uppercase tracking-wider font-mono">
+                Super Admin Portal Keys & Daily Prompt Limits Governance
+              </h3>
+            </div>
+            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold uppercase">
+              Free Trial Fallback Engine
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-xs">
+            <div className="space-y-3 md:col-span-1">
+              <label className="block text-slate-200 font-bold">
+                Daily Free Prompts / User (No BYOK Keys)
+              </label>
+              <div className="flex items-center gap-3">
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  value={config.dailyFreePromptLimit ?? 3}
+                  onChange={(e) => setConfig({ ...config, dailyFreePromptLimit: Math.max(0, Number(e.target.value)) })}
+                  className="w-32 px-3 py-2 rounded-xl bg-slate-950 border border-amber-500/40 text-amber-300 font-bold text-base focus:outline-none focus:border-amber-400 font-mono"
+                />
+                <span className="text-slate-400 text-xs font-mono">prompts / day</span>
+              </div>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                Applies strictly to logged-in users who have <strong className="text-slate-300">not</strong> provided their own provider API keys or direct subscription.
+              </p>
+            </div>
+
+            <div className="p-4 rounded-xl bg-slate-950/80 border border-white/10 space-y-2 md:col-span-2">
+              <div className="flex items-center gap-2 text-amber-400 font-bold font-mono text-xs">
+                <Info className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>Portal Key Fallback Execution Rules:</span>
+              </div>
+              <ul className="space-y-1.5 text-[11px] text-slate-300 leading-relaxed list-disc list-inside">
+                <li><strong className="text-white">Guest Visitors:</strong> Can only view all pages (API, Workspace, Bayesian, Real Example & ROI) in view-only mode; any button click prompts signup / authentication.</li>
+                <li><strong className="text-white">Logged-in Users (No BYOK Keys):</strong> Utilizes Super Admin Portal Keys up to <strong>{config.dailyFreePromptLimit ?? 3} prompts/day</strong> (resets daily at 00:00 UTC).</li>
+                <li><strong className="text-white">Logged-in Users (With BYOK Keys / Subscription):</strong> Unlimited prompts/day billed directly to their own keys or tenant subscription.</li>
+                <li><strong className="text-white">Super Admin Isolation:</strong> Super Admin Portal Keys are protected and strictly fall back only for eligible trial accounts within their daily limits.</li>
+              </ul>
             </div>
           </div>
         </div>
