@@ -37,11 +37,16 @@ import {
   Terminal,
   Mail,
   SlidersHorizontal,
-  Power
+  Power,
+  AlertTriangle,
+  TrendingDown,
+  DollarSign,
+  Gauge
 } from 'lucide-react';
 import { AIProvider, CompanyProviderCredential, CompanyOnboardingProfile, UnifiedSubscriptionGatewayConfig } from '../types';
 import { ClaudeCliTerminal } from './ClaudeCliTerminal';
 import { SubscriptionOAuthModal } from './SubscriptionOAuthModal';
+import { LowBalanceToast, LowBalanceAlert } from './LowBalanceToast';
 import ProviderConnectPanel from './ProviderConnectPanel';
 import { useAuth } from '../lib/useAuth';
 import { authedFetch } from '../lib/firebaseClient';
@@ -212,6 +217,12 @@ export const CompanyCredentialsPage: React.FC<CompanyCredentialsPageProps> = ({
   const [baseUrlInputs, setBaseUrlInputs] = useState<Record<string, string>>({});
   const [orgInputs, setOrgInputs] = useState<Record<string, string>>({});
   const [spendLimitInputs, setSpendLimitInputs] = useState<Record<string, string>>({});
+  const [thresholdInputs, setThresholdInputs] = useState<Record<string, string>>({});
+
+  // Low Balance Warning & Quota Alert System State
+  const [lowBalanceAlerts, setLowBalanceAlerts] = useState<LowBalanceAlert[]>([]);
+  const [dismissedAlerts, setDismissedAlerts] = useState<Record<string, boolean>>({});
+  const [highlightedProvider, setHighlightedProvider] = useState<AIProvider | null>(null);
 
   // Verification & Sandbox State
   const [verifyingProvider, setVerifyingProvider] = useState<string | null>(null);
@@ -264,22 +275,52 @@ export const CompanyCredentialsPage: React.FC<CompanyCredentialsPageProps> = ({
       setCredentials(credsData || {});
       setGatewayConfig(gatewayData);
 
-      // Pre-fill inputs
+      // Pre-fill inputs & Evaluate Low Balance Quota Alerts
       const initialBaseUrls: Record<string, string> = {};
       const initialOrgs: Record<string, string> = {};
       const initialSpendLimits: Record<string, string> = {};
+      const initialThresholds: Record<string, string> = {};
+      const detectedAlerts: LowBalanceAlert[] = [];
 
       if (credsData && typeof credsData === 'object') {
         Object.entries(credsData).forEach(([prov, c]: [string, any]) => {
           if (c?.baseUrl) initialBaseUrls[prov] = c.baseUrl;
           if (c?.organizationId) initialOrgs[prov] = c.organizationId;
           if (c?.monthlySpendLimitUsd) initialSpendLimits[prov] = String(c.monthlySpendLimitUsd);
+          if (c?.lowBalanceThresholdPct) initialThresholds[prov] = String(c.lowBalanceThresholdPct);
+          else initialThresholds[prov] = '20';
+
+          const limit = Number(c?.monthlySpendLimitUsd) || 5000;
+          const spend = Number(c?.currentSpendUsd) || 0;
+          const remaining = Math.max(0, Math.round((limit - spend) * 100) / 100);
+          const usagePct = limit > 0 ? (spend / limit) * 100 : 0;
+          const threshold = Number(c?.lowBalanceThresholdPct) || 20;
+          const isExhausted = remaining <= 0 || usagePct >= 100;
+          const isLow = !isExhausted && ((100 - usagePct) <= threshold || remaining <= 25);
+
+          // Evaluate low balance for configured API keys
+          const hasActiveKey = Boolean(c?.hasKey || c?.apiKey || (prov === 'google' && c?.status === 'connected'));
+          if (hasActiveKey && (isLow || isExhausted || c?.isLowBalance || c?.isQuotaExhausted)) {
+            const meta = PROVIDER_METAS.find(m => m.id === prov);
+            detectedAlerts.push({
+              provider: prov as AIProvider,
+              providerDisplayName: meta?.name || c.providerDisplayName || prov.toUpperCase(),
+              monthlySpendLimitUsd: limit,
+              currentSpendUsd: spend,
+              remainingBalanceUsd: remaining,
+              quotaUsagePct: Math.min(100, Math.round(usagePct * 10) / 10),
+              lowBalanceThresholdPct: threshold,
+              isCritical: isExhausted || usagePct >= 90 || remaining <= 10,
+            });
+          }
         });
       }
 
       setBaseUrlInputs(initialBaseUrls);
       setOrgInputs(initialOrgs);
       setSpendLimitInputs(initialSpendLimits);
+      setThresholdInputs(initialThresholds);
+      setLowBalanceAlerts(detectedAlerts);
     } catch (err: any) {
       setNotification({ type: 'error', message: 'Failed to load credentials vault: ' + err.message });
     } finally {
@@ -300,6 +341,7 @@ export const CompanyCredentialsPage: React.FC<CompanyCredentialsPageProps> = ({
     const baseUrl = baseUrlInputs[provider];
     const orgId = orgInputs[provider];
     const monthlyLimit = spendLimitInputs[provider];
+    const thresholdPct = thresholdInputs[provider];
 
     try {
       const res = await authedFetch('/api/credentials/save', {
@@ -313,6 +355,7 @@ export const CompanyCredentialsPage: React.FC<CompanyCredentialsPageProps> = ({
           baseUrl,
           organizationId: orgId,
           monthlySpendLimitUsd: monthlyLimit ? Number(monthlyLimit) : undefined,
+          lowBalanceThresholdPct: thresholdPct ? Number(thresholdPct) : undefined,
         }),
       });
 
@@ -320,12 +363,104 @@ export const CompanyCredentialsPage: React.FC<CompanyCredentialsPageProps> = ({
       if (data.success) {
         setNotification({ type: 'success', message: data.message });
         setKeyInputs(prev => ({ ...prev, [provider]: '' }));
+        // Clear dismissed state for this provider so any low balance condition is re-evaluated
+        setDismissedAlerts(prev => ({ ...prev, [provider]: false }));
         await loadData();
       } else {
         setNotification({ type: 'error', message: data.error || 'Failed to save credential' });
       }
     } catch (err: any) {
       setNotification({ type: 'error', message: 'Error saving credential: ' + err.message });
+    }
+  };
+
+  // Adjust Spend or Threshold (Live balance modification / testing)
+  const handleAdjustSpendOrThreshold = async (
+    provider: AIProvider,
+    updates: { currentSpendUsd?: number; monthlySpendLimitUsd?: number; lowBalanceThresholdPct?: number }
+  ) => {
+    if (!requireAuthGuard('adjusting balance or quota settings')) return;
+
+    try {
+      const res = await authedFetch('/api/credentials/adjust-balance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider,
+          ...updates,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        setNotification({ type: 'success', message: data.message });
+        // Clear dismissed state so low-balance toast pops up
+        setDismissedAlerts(prev => ({ ...prev, [provider]: false }));
+        await loadData();
+      } else {
+        setNotification({ type: 'error', message: data.error || 'Failed to adjust balance' });
+      }
+    } catch (err: any) {
+      setNotification({ type: 'error', message: 'Error: ' + err.message });
+    }
+  };
+
+  // Simulate Low Balance Condition (Sets spend to 88% to test toast notification)
+  const handleSimulateLowBalance = async (provider: AIProvider) => {
+    const cred = credentials[provider];
+    const limit = Number(cred?.monthlySpendLimitUsd) || Number(spendLimitInputs[provider]) || 100;
+    const simulatedSpend = Math.round(limit * 0.88 * 100) / 100; // 88% spend (12% remaining)
+    await handleAdjustSpendOrThreshold(provider, {
+      monthlySpendLimitUsd: limit,
+      currentSpendUsd: simulatedSpend,
+      lowBalanceThresholdPct: 20,
+    });
+  };
+
+  // Reset Spend to $0 (Restores healthy balance)
+  const handleResetSpend = async (provider: AIProvider) => {
+    await handleAdjustSpendOrThreshold(provider, { currentSpendUsd: 0 });
+  };
+
+  // Top Up Spend Ceiling (Adds extra quota)
+  const handleTopUpCeiling = async (provider: AIProvider, addedAmount: number) => {
+    const cred = credentials[provider];
+    const currentLimit = Number(cred?.monthlySpendLimitUsd) || Number(spendLimitInputs[provider]) || 5000;
+    const newLimit = currentLimit + addedAmount;
+    setSpendLimitInputs(prev => ({ ...prev, [provider]: String(newLimit) }));
+    await handleAdjustSpendOrThreshold(provider, { monthlySpendLimitUsd: newLimit });
+  };
+
+  // Dismiss Toast Warning
+  const handleDismissToastAlert = (provider?: AIProvider) => {
+    if (provider) {
+      setDismissedAlerts(prev => ({ ...prev, [provider]: true }));
+    } else {
+      const allDismissed: Record<string, boolean> = {};
+      lowBalanceAlerts.forEach(a => {
+        allDismissed[a.provider] = true;
+      });
+      setDismissedAlerts(allDismissed);
+    }
+  };
+
+  // Navigate to Adjust Limit from Toast
+  const handleNavigateToAdjustLimit = (provider: AIProvider) => {
+    setActiveTab('matrix');
+    setExpandedProvider(provider);
+    setProviderModeTab(prev => ({ ...prev, [provider]: 'api_key' }));
+    setHighlightedProvider(provider);
+    setTimeout(() => setHighlightedProvider(null), 3000);
+  };
+
+  // Navigate to Subscription from Toast
+  const handleNavigateToSubscription = (provider: AIProvider) => {
+    setActiveTab('matrix');
+    setExpandedProvider(provider);
+    setProviderModeTab(prev => ({ ...prev, [provider]: 'subscription' }));
+    const meta = PROVIDER_METAS.find(m => m.id === provider);
+    if (meta?.subscriptionAvailable) {
+      setOauthModalProvider(provider);
     }
   };
 
@@ -595,7 +730,7 @@ export const CompanyCredentialsPage: React.FC<CompanyCredentialsPageProps> = ({
           </div>
 
           {/* Quick Metrics Capsule */}
-          <div className="flex items-center gap-3 bg-slate-950/80 p-3 rounded-2xl border border-slate-800 shrink-0">
+          <div className="flex flex-wrap items-center gap-3 bg-slate-950/80 p-3 rounded-2xl border border-slate-800 shrink-0">
             <div className="px-4 py-2 text-center border-r border-slate-800">
               <div className="text-xs text-slate-400">Connected Hubs</div>
               <div className="text-xl font-bold text-slate-100 font-mono">{totalConnected} <span className="text-xs text-slate-500">/ 6</span></div>
@@ -604,9 +739,25 @@ export const CompanyCredentialsPage: React.FC<CompanyCredentialsPageProps> = ({
               <div className="text-xs text-slate-400">Flat Subscriptions</div>
               <div className="text-xl font-bold text-emerald-400 font-mono">{totalSubscriptions} <span className="text-xs text-emerald-600">Active</span></div>
             </div>
-            <div className="px-4 py-2 text-center">
+            <div className="px-4 py-2 text-center border-r border-slate-800">
               <div className="text-xs text-slate-400">Monthly Avoided</div>
               <div className="text-xl font-bold text-amber-400 font-mono">$5,680+</div>
+            </div>
+            <div className="px-4 py-2 text-center">
+              <div className="text-xs text-slate-400">API Key Quota</div>
+              <div className="text-sm font-bold font-mono mt-1">
+                {lowBalanceAlerts.length > 0 ? (
+                  <span className="text-amber-400 flex items-center justify-center gap-1">
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    <span>{lowBalanceAlerts.length} Low Balance</span>
+                  </span>
+                ) : (
+                  <span className="text-emerald-400 flex items-center justify-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>All Quotas OK</span>
+                  </span>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -857,19 +1008,105 @@ export const CompanyCredentialsPage: React.FC<CompanyCredentialsPageProps> = ({
             <div>
               <h2 className="text-xl font-bold text-slate-100">Configured AI Providers & Subscriptions</h2>
               <p className="text-xs text-slate-400 mt-0.5">
-                Toggle between <strong>Flat-Rate Subscription / OAuth</strong> ($0.00/token) and <strong>Pay-Per-Token API Keys</strong> for each provider.
+                Toggle between <strong>Flat-Rate Subscription / OAuth</strong> ($0.00/token) and <strong>Pay-Per-Token API Keys</strong> with real-time balance tracking & low-quota alerts.
               </p>
             </div>
 
-            <button
-              onClick={loadData}
-              disabled={isLoading}
-              className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition-colors border border-slate-700 shrink-0"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-              <span>Refresh Vault</span>
-            </button>
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={loadData}
+                disabled={isLoading}
+                className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition-colors border border-slate-700 shrink-0"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+                <span>Refresh Vault & Quotas</span>
+              </button>
+            </div>
           </div>
+
+          {/* Active Quota Exhaustion & Low Balance Warning Center */}
+          {lowBalanceAlerts.length > 0 && (
+            <div className="p-5 rounded-2xl bg-gradient-to-r from-amber-950/70 via-slate-900 to-rose-950/70 border border-amber-500/50 shadow-xl space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0 animate-pulse">
+                    <AlertTriangle className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-amber-200 flex items-center gap-2">
+                      <span>Low API Key Quota Warnings Active ({lowBalanceAlerts.length} provider{lowBalanceAlerts.length > 1 ? 's' : ''})</span>
+                    </h3>
+                    <p className="text-xs text-slate-300 mt-0.5">
+                      The following configured API keys are nearing exhaustion. Adjust your monthly spend limit or link a $0/token flat subscription to prevent dispatch interruptions.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center space-x-2 shrink-0">
+                  <button
+                    onClick={() => {
+                      // Trigger all toast notifications
+                      setDismissedAlerts({});
+                      setNotification({ type: 'success', message: 'Re-triggered live Low Balance toast alert notifications.' });
+                    }}
+                    className="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-medium flex items-center space-x-1.5 transition-all"
+                  >
+                    <Activity className="w-3.5 h-3.5" />
+                    <span>Show Active Toast Alerts</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Alert Quick Cards Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 pt-1">
+                {lowBalanceAlerts.map(alert => (
+                  <div 
+                    key={alert.provider}
+                    className="bg-slate-950/90 rounded-xl p-3.5 border border-amber-500/30 space-y-2 flex flex-col justify-between"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-xs text-slate-100">{alert.providerDisplayName}</span>
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                        alert.isCritical ? 'bg-rose-950 text-rose-300 border border-rose-800' : 'bg-amber-950 text-amber-300 border border-amber-800'
+                      }`}>
+                        {alert.quotaUsagePct.toFixed(0)}% Used
+                      </span>
+                    </div>
+
+                    <div className="space-y-1">
+                      <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden">
+                        <div 
+                          className={`h-full ${alert.isCritical ? 'bg-rose-500' : 'bg-amber-500'}`}
+                          style={{ width: `${Math.min(100, alert.quotaUsagePct)}%` }}
+                        />
+                      </div>
+                      <div className="flex justify-between text-[11px] font-mono text-slate-400">
+                        <span>Spend: ${alert.currentSpendUsd.toFixed(2)} / ${alert.monthlySpendLimitUsd.toFixed(2)}</span>
+                        <span className={alert.isCritical ? 'text-rose-300 font-bold' : 'text-amber-300 font-bold'}>
+                          ${alert.remainingBalanceUsd.toFixed(2)} left
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-1">
+                      <button
+                        onClick={() => handleNavigateToAdjustLimit(alert.provider)}
+                        className="flex-1 py-1 px-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-medium rounded-lg text-center transition-colors"
+                      >
+                        Adjust Limit
+                      </button>
+                      <button
+                        onClick={() => handleNavigateToSubscription(alert.provider)}
+                        className="flex-1 py-1 px-2 bg-indigo-600/80 hover:bg-indigo-600 text-white text-[11px] font-medium rounded-lg text-center transition-colors"
+                      >
+                        Link $0 Plan
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 gap-5">
             {PROVIDER_METAS.map((meta) => {
@@ -877,12 +1114,27 @@ export const CompanyCredentialsPage: React.FC<CompanyCredentialsPageProps> = ({
               const isConfigured = cred?.status === 'connected' || Boolean(cred?.hasKey) || Boolean(cred?.hasSubscription);
               const isExpanded = expandedProvider === meta.id;
               const currentMode = providerModeTab[meta.id] || (cred?.hasSubscription ? 'subscription' : 'api_key');
+              const isHighlighted = highlightedProvider === meta.id;
+              
+              // Provider-specific balance calculations
+              const monthlyLimit = Number(spendLimitInputs[meta.id]) || Number(cred?.monthlySpendLimitUsd) || 5000;
+              const currentSpend = Number(cred?.currentSpendUsd) || 0;
+              const remainingBalance = Math.max(0, Math.round((monthlyLimit - currentSpend) * 100) / 100);
+              const quotaUsagePct = monthlyLimit > 0 ? Math.min(100, Math.round((currentSpend / monthlyLimit) * 1000) / 10) : 0;
+              const thresholdPct = Number(thresholdInputs[meta.id]) || Number(cred?.lowBalanceThresholdPct) || 20;
+              const isExhausted = remainingBalance <= 0 || quotaUsagePct >= 100;
+              const isLow = !isExhausted && ((100 - quotaUsagePct) <= thresholdPct || remainingBalance <= 25);
+              const hasLowBalance = (cred?.hasKey || cred?.status === 'connected') && (isLow || isExhausted || cred?.isLowBalance || cred?.isQuotaExhausted);
 
               return (
                 <div
                   key={meta.id}
                   className={`bg-slate-900 border rounded-2xl transition-all overflow-hidden ${
-                    isExpanded ? 'border-indigo-600/80 shadow-2xl ring-1 ring-indigo-600/30' : 'border-slate-800 hover:border-slate-700 shadow-md'
+                    isHighlighted 
+                      ? 'ring-2 ring-amber-400 border-amber-400 shadow-2xl scale-[1.005]'
+                      : isExpanded 
+                        ? hasLowBalance ? 'border-amber-500/80 shadow-2xl ring-1 ring-amber-500/30' : 'border-indigo-600/80 shadow-2xl ring-1 ring-indigo-600/30' 
+                        : hasLowBalance ? 'border-amber-500/40 hover:border-amber-500/70 shadow-md' : 'border-slate-800 hover:border-slate-700 shadow-md'
                   }`}
                 >
                   {/* Card Header */}
@@ -909,6 +1161,18 @@ export const CompanyCredentialsPage: React.FC<CompanyCredentialsPageProps> = ({
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2 self-end sm:self-center">
+                      {/* Low Balance Warning Badge */}
+                      {hasLowBalance && (
+                        <div className={`flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-bold border animate-pulse ${
+                          isExhausted 
+                            ? 'bg-rose-950/90 text-rose-300 border-rose-800' 
+                            : 'bg-amber-950/90 text-amber-300 border-amber-800'
+                        }`}>
+                          <AlertTriangle className="w-3.5 h-3.5" />
+                          <span>{isExhausted ? 'Quota Exhausted' : `Low Balance ($${remainingBalance.toFixed(2)} left)`}</span>
+                        </div>
+                      )}
+
                       {cred?.hasSubscription && !cred?.hasKey && (
                         <div className="flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-medium bg-emerald-950/90 text-emerald-300 border border-emerald-800/80">
                           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -916,14 +1180,14 @@ export const CompanyCredentialsPage: React.FC<CompanyCredentialsPageProps> = ({
                         </div>
                       )}
 
-                      {cred?.hasKey && !cred?.hasSubscription && (
+                      {cred?.hasKey && !cred?.hasSubscription && !hasLowBalance && (
                         <div className="flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-medium bg-indigo-950/90 text-indigo-300 border border-indigo-800/80">
                           <Key className="w-3 h-3 text-indigo-400" />
                           <span>Direct API Key Configured</span>
                         </div>
                       )}
 
-                      {cred?.hasSubscription && cred?.hasKey && (
+                      {cred?.hasSubscription && cred?.hasKey && !hasLowBalance && (
                         <div className="flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-medium bg-amber-950/90 text-amber-300 border border-amber-800/80">
                           <Sparkles className="w-3 h-3 text-amber-400" />
                           <span>Dual Configured: Subscription & API Key</span>
@@ -1072,9 +1336,94 @@ export const CompanyCredentialsPage: React.FC<CompanyCredentialsPageProps> = ({
                         </div>
                       )}
 
-                      {/* MODE 2: Standard Pay-Per-Token API Key */}
+                      {/* MODE 2: Standard Pay-Per-Token API Key & Quota Management */}
                       {(currentMode === 'api_key' || !meta.subscriptionAvailable) && (
-                        <div className="space-y-4">
+                        <div className="space-y-5">
+                          {/* Live Quota Usage & Low Balance Monitor Bar */}
+                          <div className={`p-4 rounded-xl border space-y-3 transition-all ${
+                            isExhausted 
+                              ? 'bg-rose-950/40 border-rose-500/50' 
+                              : isLow 
+                                ? 'bg-amber-950/40 border-amber-500/50' 
+                                : 'bg-slate-900/90 border-slate-800'
+                          }`}>
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                              <div className="flex items-center space-x-2">
+                                <Gauge className={`w-4 h-4 ${isExhausted ? 'text-rose-400' : isLow ? 'text-amber-400' : 'text-indigo-400'}`} />
+                                <span className="font-bold text-slate-200">API Key Quota & Balance Monitor</span>
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                                  isExhausted 
+                                    ? 'bg-rose-900 text-rose-200 border border-rose-700 animate-pulse' 
+                                    : isLow 
+                                      ? 'bg-amber-900 text-amber-200 border border-amber-700 animate-pulse' 
+                                      : 'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                                }`}>
+                                  {isExhausted ? 'Quota Exhausted' : isLow ? 'Low Balance Warning' : 'Quota Healthy'}
+                                </span>
+                              </div>
+
+                              <div className="flex items-center space-x-2 text-[11px] font-mono">
+                                <span className="text-slate-400">Current Spend:</span>
+                                <span className="text-slate-100 font-bold">${currentSpend.toFixed(2)}</span>
+                                <span className="text-slate-600">/</span>
+                                <span className="text-slate-400">Limit:</span>
+                                <span className="text-slate-100 font-bold">${monthlyLimit.toFixed(2)}</span>
+                                <span className={`font-bold ${isExhausted ? 'text-rose-400' : isLow ? 'text-amber-400' : 'text-emerald-400'}`}>
+                                  ({quotaUsagePct.toFixed(1)}%)
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Progress Bar */}
+                            <div className="w-full h-2.5 bg-slate-950 rounded-full overflow-hidden border border-slate-800/80">
+                              <div 
+                                className={`h-full rounded-full transition-all duration-500 ${
+                                  isExhausted 
+                                    ? 'bg-gradient-to-r from-rose-500 to-red-600' 
+                                    : isLow 
+                                      ? 'bg-gradient-to-r from-amber-500 to-orange-500' 
+                                      : 'bg-gradient-to-r from-emerald-500 to-indigo-500'
+                                }`}
+                                style={{ width: `${Math.min(100, Math.max(3, quotaUsagePct))}%` }}
+                              />
+                            </div>
+
+                            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400 pt-1">
+                              <div className="flex items-center space-x-2">
+                                <TrendingDown className="w-3.5 h-3.5 text-slate-500" />
+                                <span>Remaining Usable Balance:</span>
+                                <span className={`font-bold font-mono ${isExhausted ? 'text-rose-300' : isLow ? 'text-amber-300' : 'text-emerald-300'}`}>
+                                  ${remainingBalance.toFixed(2)} USD
+                                </span>
+                              </div>
+
+                              {/* Interactive Simulation & Test Controls */}
+                              <div className="flex items-center space-x-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleSimulateLowBalance(meta.id)}
+                                  className="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-[10px] font-mono flex items-center gap-1 transition-colors"
+                                  title="Sets spend to 88% to test toast notification"
+                                >
+                                  <AlertTriangle className="w-3 h-3" />
+                                  <span>Simulate 88% Spend (Test Toast)</span>
+                                </button>
+
+                                {currentSpend > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleResetSpend(meta.id)}
+                                    className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-mono transition-colors"
+                                    title="Reset spend to $0.00"
+                                  >
+                                    Reset Spend
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Key & Base URL Inputs */}
                           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                             <div className="space-y-1.5">
                               <label className="text-xs font-semibold text-slate-300 flex items-center justify-between">
@@ -1113,7 +1462,68 @@ export const CompanyCredentialsPage: React.FC<CompanyCredentialsPageProps> = ({
                             </div>
                           </div>
 
-                          <div className="flex items-center justify-end space-x-2 pt-2">
+                          {/* Spend Limit & Alert Threshold Row */}
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-slate-900/60 rounded-xl border border-slate-800">
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                                  <DollarSign className="w-3.5 h-3.5 text-slate-400" />
+                                  <span>Monthly Spend Limit ($ USD)</span>
+                                </label>
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleTopUpCeiling(meta.id, 100)}
+                                    className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-indigo-300 font-mono text-[10px]"
+                                  >
+                                    +$100
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleTopUpCeiling(meta.id, 500)}
+                                    className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-indigo-300 font-mono text-[10px]"
+                                  >
+                                    +$500
+                                  </button>
+                                </div>
+                              </div>
+                              <input
+                                type="number"
+                                min="10"
+                                step="50"
+                                value={spendLimitInputs[meta.id] || ''}
+                                onChange={(e) => setSpendLimitInputs(prev => ({ ...prev, [meta.id]: e.target.value }))}
+                                placeholder="5000"
+                                className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-xs text-slate-100 font-mono focus:outline-none focus:border-indigo-500"
+                              />
+                              <p className="text-[10px] text-slate-500">Auto-caps dispatch calls to prevent unexpected cloud bills.</p>
+                            </div>
+
+                            <div className="space-y-2">
+                              <label className="text-xs font-semibold text-slate-300 flex items-center justify-between">
+                                <span className="flex items-center gap-1.5">
+                                  <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                                  <span>Low Balance Toast Alert Threshold (%)</span>
+                                </span>
+                                <span className="text-[11px] font-mono text-amber-400 font-bold">{thresholdInputs[meta.id] || '20'}%</span>
+                              </label>
+                              <div className="flex items-center space-x-3">
+                                <input
+                                  type="range"
+                                  min="5"
+                                  max="50"
+                                  step="5"
+                                  value={thresholdInputs[meta.id] || '20'}
+                                  onChange={(e) => setThresholdInputs(prev => ({ ...prev, [meta.id]: e.target.value }))}
+                                  className="w-full h-2 bg-slate-950 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                                />
+                                <span className="text-xs font-mono text-slate-300 w-8">{thresholdInputs[meta.id] || '20'}%</span>
+                              </div>
+                              <p className="text-[10px] text-slate-500">Triggers toast warning when remaining quota is ≤ this percentage.</p>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-end space-x-2 pt-1">
                             <button
                               onClick={() => handleVerify(meta.id, 'api')}
                               disabled={verifyingProvider === meta.id}
@@ -1268,6 +1678,16 @@ export const CompanyCredentialsPage: React.FC<CompanyCredentialsPageProps> = ({
             setNotification({ type: 'success', message: `Subscription for ${oauthModalProvider.toUpperCase()} connected successfully.` });
             loadData();
           }}
+        />
+      )}
+
+      {/* Floating Low Balance Toast Notification System */}
+      {lowBalanceAlerts.length > 0 && lowBalanceAlerts.some(a => !dismissedAlerts[a.provider]) && (
+        <LowBalanceToast
+          alerts={lowBalanceAlerts.filter(a => !dismissedAlerts[a.provider])}
+          onDismiss={handleDismissToastAlert}
+          onAdjustLimit={handleNavigateToAdjustLimit}
+          onSwitchToSubscription={handleNavigateToSubscription}
         />
       )}
 

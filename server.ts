@@ -396,6 +396,12 @@ export interface ServerCompanyCredential {
   detectedModels?: string[];
   monthlySpendLimitUsd?: number;
   currentSpendUsd?: number;
+  remainingBalanceUsd?: number;
+  quotaUsagePct?: number;
+  lowBalanceThresholdPct?: number;
+  isLowBalance?: boolean;
+  isQuotaExhausted?: boolean;
+  lastLowBalanceAlertAt?: string;
   notes?: string;
 }
 
@@ -1189,9 +1195,17 @@ app.post("/api/credentials/profile", requireAuthForBYOK, (req, res) => {
 });
 
 app.get("/api/credentials", (req, res) => {
-  // Return credentials with masked keys & subscription states
+  // Return credentials with masked keys, subscription states & low balance metrics
   const safeCredentials: Record<string, any> = {};
   for (const [provider, cred] of Object.entries(companyCredentialsVault)) {
+    const monthlyLimit = Number(cred.monthlySpendLimitUsd) > 0 ? Number(cred.monthlySpendLimitUsd) : 5000;
+    const currentSpend = Number(cred.currentSpendUsd) || 0;
+    const remainingBalance = Math.max(0, Math.round((monthlyLimit - currentSpend) * 100) / 100);
+    const quotaUsagePct = Math.min(100, Math.round((currentSpend / monthlyLimit) * 1000) / 10);
+    const thresholdPct = Number(cred.lowBalanceThresholdPct) > 0 ? Number(cred.lowBalanceThresholdPct) : 20;
+    const isExhausted = remainingBalance <= 0 || quotaUsagePct >= 100;
+    const isLow = !isExhausted && ((100 - quotaUsagePct) <= thresholdPct || remainingBalance <= 25);
+
     safeCredentials[provider] = {
       provider: cred.provider,
       providerDisplayName: cred.providerDisplayName,
@@ -1222,8 +1236,17 @@ app.get("/api/credentials", (req, res) => {
       lastVerifiedAt: cred.lastVerifiedAt,
       latencyMs: cred.latencyMs,
       detectedModels: cred.detectedModels || [],
-      monthlySpendLimitUsd: cred.monthlySpendLimitUsd,
-      currentSpendUsd: cred.currentSpendUsd,
+      
+      // Quota & Low Balance Telemetry
+      monthlySpendLimitUsd: monthlyLimit,
+      currentSpendUsd: currentSpend,
+      remainingBalanceUsd: remainingBalance,
+      quotaUsagePct: quotaUsagePct,
+      lowBalanceThresholdPct: thresholdPct,
+      isLowBalance: isLow,
+      isQuotaExhausted: isExhausted,
+      lastLowBalanceAlertAt: cred.lastLowBalanceAlertAt,
+      
       notes: cred.notes,
     };
   }
@@ -1241,7 +1264,9 @@ app.post("/api/credentials/save", requireAuthForBYOK, (req, res) => {
     projectId, 
     subscriptionTier,
     subscriptionEmail,
-    monthlySpendLimitUsd, 
+    monthlySpendLimitUsd,
+    currentSpendUsd,
+    lowBalanceThresholdPct,
     notes 
   } = req.body;
 
@@ -1260,6 +1285,10 @@ app.post("/api/credentials/save", requireAuthForBYOK, (req, res) => {
   const cleanKey = (apiKey || "").trim();
   const maskedKey = cleanKey ? `${cleanKey.slice(0, 6)}...${cleanKey.slice(-4)}` : existing.maskedKey;
 
+  const resolvedSpendLimit = Number(monthlySpendLimitUsd) > 0 ? Number(monthlySpendLimitUsd) : (existing.monthlySpendLimitUsd || 5000);
+  const resolvedCurrentSpend = currentSpendUsd !== undefined ? Number(currentSpendUsd) : (existing.currentSpendUsd || 0);
+  const resolvedThreshold = Number(lowBalanceThresholdPct) > 0 ? Number(lowBalanceThresholdPct) : (existing.lowBalanceThresholdPct || 20);
+
   companyCredentialsVault[provider] = {
     ...existing,
     provider,
@@ -1274,17 +1303,62 @@ app.post("/api/credentials/save", requireAuthForBYOK, (req, res) => {
     projectId: projectId !== undefined ? projectId : existing.projectId,
     status: (cleanKey || existing.hasSubscription) ? "connected" : existing.status,
     lastVerifiedAt: cleanKey ? new Date().toISOString() : existing.lastVerifiedAt,
-    monthlySpendLimitUsd: Number(monthlySpendLimitUsd) || existing.monthlySpendLimitUsd || 5000,
+    monthlySpendLimitUsd: resolvedSpendLimit,
+    currentSpendUsd: resolvedCurrentSpend,
+    lowBalanceThresholdPct: resolvedThreshold,
     notes: notes || existing.notes,
   };
+
+  const remainingBalance = Math.max(0, Math.round((resolvedSpendLimit - resolvedCurrentSpend) * 100) / 100);
+  const quotaUsagePct = Math.min(100, Math.round((resolvedCurrentSpend / resolvedSpendLimit) * 1000) / 10);
+  const isExhausted = remainingBalance <= 0 || quotaUsagePct >= 100;
+  const isLow = !isExhausted && ((100 - quotaUsagePct) <= resolvedThreshold || remainingBalance <= 25);
 
   res.json({
     success: true,
     message: `Direct credentials & routing config for ${provider} saved to Company Vault.`,
+    isLowBalance: isLow,
+    isQuotaExhausted: isExhausted,
+    remainingBalanceUsd: remainingBalance,
+    quotaUsagePct: quotaUsagePct,
     credential: {
       ...companyCredentialsVault[provider],
       apiKey: undefined, // Never return raw key
     }
+  });
+});
+
+// Endpoint to simulate / adjust balance and test low balance warning triggers
+app.post("/api/credentials/adjust-balance", requireAuthForBYOK, (req, res) => {
+  const { provider, currentSpendUsd, monthlySpendLimitUsd, lowBalanceThresholdPct } = req.body;
+  if (!provider || !companyCredentialsVault[provider]) {
+    return res.status(404).json({ error: `Provider '${provider}' not found in vault.` });
+  }
+
+  const cred = companyCredentialsVault[provider];
+  if (currentSpendUsd !== undefined) cred.currentSpendUsd = Number(currentSpendUsd);
+  if (monthlySpendLimitUsd !== undefined) cred.monthlySpendLimitUsd = Number(monthlySpendLimitUsd);
+  if (lowBalanceThresholdPct !== undefined) cred.lowBalanceThresholdPct = Number(lowBalanceThresholdPct);
+
+  const limit = cred.monthlySpendLimitUsd || 5000;
+  const spend = cred.currentSpendUsd || 0;
+  const remaining = Math.max(0, Math.round((limit - spend) * 100) / 100);
+  const usagePct = Math.min(100, Math.round((spend / limit) * 1000) / 10);
+  const threshold = cred.lowBalanceThresholdPct || 20;
+  const isLow = !((remaining <= 0) || (usagePct >= 100)) && (((100 - usagePct) <= threshold) || remaining <= 25);
+  const isExhausted = remaining <= 0 || usagePct >= 100;
+
+  res.json({
+    success: true,
+    provider,
+    monthlySpendLimitUsd: limit,
+    currentSpendUsd: spend,
+    remainingBalanceUsd: remaining,
+    quotaUsagePct: usagePct,
+    lowBalanceThresholdPct: threshold,
+    isLowBalance: isLow,
+    isQuotaExhausted: isExhausted,
+    message: `Balance for ${provider.toUpperCase()} adjusted. Spend: $${spend.toFixed(2)} / $${limit.toFixed(2)} (${usagePct}% used).`
   });
 });
 

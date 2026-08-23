@@ -345,6 +345,12 @@ export interface CompanyProviderCredential {
   detectedModels?: string[];
   monthlySpendLimitUsd?: number;
   currentSpendUsd?: number;
+  remainingBalanceUsd?: number;
+  quotaUsagePct?: number;
+  lowBalanceThresholdPct?: number;
+  isLowBalance?: boolean;
+  isQuotaExhausted?: boolean;
+  lastLowBalanceAlertAt?: string;
   notes?: string;
 }
 
