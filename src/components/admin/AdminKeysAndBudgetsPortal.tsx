@@ -1436,7 +1436,7 @@ export const AdminKeysAndBudgetsPortal: React.FC<AdminKeysAndBudgetsPortalProps>
 
               <button
                 type="button"
-                onClick={handleSubmitEnrollment}
+                onClick={() => handleSubmitEnrollment()}
                 disabled={isEnrolling}
                 className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs shadow-lg shadow-purple-600/30 transition-all cursor-pointer disabled:opacity-50"
               >
