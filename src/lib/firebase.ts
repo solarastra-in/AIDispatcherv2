@@ -542,6 +542,16 @@ export interface CompanyAdminUser {
   lastActiveAt?: string;
 }
 
+export interface CompanySsoSettings {
+  enabled: boolean;
+  ssoDomain: string;
+  defaultTeamId?: string;
+  defaultRole: string;
+  defaultTierCap: string;
+  defaultMonthlyTokenQuota: number;
+  autoDispatchWelcomeEmail: boolean;
+}
+
 export interface CompanyFirestore {
   id: string;
   name: string;
@@ -558,6 +568,7 @@ export interface CompanyFirestore {
   superAdminEmail: string;
   companyAdminEmail?: string;
   companyAdmins?: CompanyAdminUser[];
+  ssoSettings?: CompanySsoSettings;
   status: 'active' | 'paused' | 'suspended';
   createdAt: string;
   updatedAt: string;
@@ -1265,6 +1276,9 @@ export async function loadAdminKeyConfigsFromFirestore(): Promise<AdminKeyConfig
           status = 'budget_exceeded';
         } else if (isDayUsageOver) {
           status = 'day_limit_exceeded';
+        } else {
+          status = 'active';
+          isActive = true;
         }
 
         configs.push({

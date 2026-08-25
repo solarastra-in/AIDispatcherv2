@@ -24,6 +24,7 @@ import { PricingPage } from './pages/PricingPage';
 import { ContactPage } from './pages/ContactPage';
 import { PageAccessGuard } from './components/PageAccessGuard';
 import { RoleMatrixModal } from './components/RoleMatrixModal';
+import { CompanyAdminOnboardingWizard } from './components/CompanyAdminOnboardingWizard';
 import { canUserViewPage } from './utils/permissions';
 import { AIModel, UserPersona, ContextLedgerEntry } from './types';
 import { INITIAL_AI_MODELS, PERSONA_PROFILES } from './data/mockData';
@@ -80,6 +81,7 @@ export default function App() {
   const [isQualityInspectorOpen, setIsQualityInspectorOpen] = useState<boolean>(false);
   const [isAuthGateOpen, setIsAuthGateOpen] = useState<boolean>(false);
   const [isRoleMatrixOpen, setIsRoleMatrixOpen] = useState<boolean>(false);
+  const [isCompanyAdminWizardOpen, setIsCompanyAdminWizardOpen] = useState<boolean>(false);
   const [verificationBanner, setVerificationBanner] = useState<string | null>(null);
   const [firebaseUser, setFirebaseUser] = useState<any>(null);
 
@@ -236,6 +238,7 @@ export default function App() {
           onOpenQualityInspector={() => setIsQualityInspectorOpen(!isQualityInspectorOpen)}
           onOpenAuthGate={() => setIsAuthGateOpen(true)}
           onOpenRoleMatrix={() => setIsRoleMatrixOpen(true)}
+          onOpenCompanyAdminWizard={() => setIsCompanyAdminWizardOpen(true)}
         />
       </div>
 
@@ -355,6 +358,8 @@ export default function App() {
                   setCurrentTab('dispatch');
                 }}
                 onOpenAuthGate={() => setIsAuthGateOpen(true)}
+                activePersona={activePersona}
+                onOpenCompanyAdminWizard={() => setIsCompanyAdminWizardOpen(true)}
               />
             )}
 
@@ -401,6 +406,7 @@ export default function App() {
               <TeamGovernance
                 activePersona={activePersona}
                 onNavigateTab={setCurrentTab}
+                onOpenCompanyAdminWizard={() => setIsCompanyAdminWizardOpen(true)}
               />
             )}
 
@@ -656,6 +662,17 @@ export default function App() {
         onNavigateTab={(tab) => {
           setCurrentTab(tab);
           setIsRoleMatrixOpen(false);
+        }}
+      />
+
+      {/* 7-Step Company Admin Onboarding & Team Provisioning Wizard */}
+      <CompanyAdminOnboardingWizard
+        isOpen={isCompanyAdminWizardOpen}
+        onClose={() => setIsCompanyAdminWizardOpen(false)}
+        activePersona={activePersona}
+        onComplete={(updatedCompany) => {
+          setIsCompanyAdminWizardOpen(false);
+          setVerificationBanner(`Enterprise setup completed successfully for ${updatedCompany.name}! Employees have been provisioned.`);
         }}
       />
     </div>

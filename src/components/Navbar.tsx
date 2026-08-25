@@ -24,7 +24,9 @@ import {
   ArrowRight,
   ExternalLink,
   Sliders,
-  CheckCircle2
+  CheckCircle2,
+  Building2,
+  Crown
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { UserPersona } from '../types';
@@ -43,6 +45,7 @@ interface NavbarProps {
   onOpenQualityInspector?: () => void;
   onOpenAuthGate?: () => void;
   onOpenRoleMatrix?: () => void;
+  onOpenCompanyAdminWizard?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -54,6 +57,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenQualityInspector,
   onOpenAuthGate,
   onOpenRoleMatrix,
+  onOpenCompanyAdminWizard,
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [exploreMenuOpen, setExploreMenuOpen] = useState(false);
@@ -515,6 +519,32 @@ export const Navbar: React.FC<NavbarProps> = ({
               </button>
             )}
 
+            {/* Global Company Name Badge (Visible for Company Admins and Company Employees) */}
+            {activePersona.companyName && (
+              <div 
+                id="nav-company-name-badge"
+                className="hidden lg:flex items-center gap-1.5 px-3 py-1 rounded-xl bg-purple-500/15 border border-purple-500/35 text-purple-200 text-xs font-semibold backdrop-blur-md shadow-sm"
+                title={`Logged in to Company Workspace: ${activePersona.companyName}`}
+              >
+                <Building2 className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                <span className="max-w-[130px] xl:max-w-[170px] truncate">{activePersona.companyName}</span>
+              </div>
+            )}
+
+            {/* Company Admin 7-Step Setup Wizard Quick Launch Button */}
+            {onOpenCompanyAdminWizard && (activePersona.role === 'corporate_admin' || activePersona.role === 'platform_admin' || activePersona.isCompanyAdmin) && (
+              <button
+                id="nav-company-admin-wizard-btn"
+                onClick={onOpenCompanyAdminWizard}
+                className="hidden xl:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-purple-600/25 to-indigo-600/25 hover:from-purple-600/40 hover:to-indigo-600/40 border border-purple-500/50 text-purple-200 text-xs font-semibold transition-all cursor-pointer shadow-sm"
+                title="Open Company Admin Onboarding Setup Wizard (7 Steps: Invitation -> BYOK -> Budgets -> Branding -> Teams -> Emails -> Confirm)"
+              >
+                <Crown className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                <span>Setup Wizard</span>
+                <span className="px-1.5 py-0.2 rounded-full text-[9px] font-mono bg-purple-500/40 text-purple-100 font-bold border border-purple-400/40">7 Steps</span>
+              </button>
+            )}
+
             {/* Google Identity & SuperAdmin Status Button */}
             <button
               id="google-auth-trigger-btn"
@@ -798,6 +828,33 @@ export const Navbar: React.FC<NavbarProps> = ({
                     setMobileMenuOpen(false);
                   }}
                 />
+
+                {/* Company Workspace Banner & Wizard Trigger in Mobile Drawer */}
+                {activePersona.companyName && (
+                  <div className="p-3 rounded-xl bg-purple-950/40 border border-purple-500/30 text-purple-200 text-xs space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 font-semibold">
+                        <Building2 className="w-4 h-4 text-purple-400 shrink-0" />
+                        <span className="truncate">{activePersona.companyName}</span>
+                      </div>
+                      <span className="px-1.5 py-0.2 rounded text-[9px] font-mono uppercase bg-purple-500/20 text-purple-300 border border-purple-500/30 font-bold">
+                        {activePersona.role.replace('_', ' ')}
+                      </span>
+                    </div>
+                    {onOpenCompanyAdminWizard && (activePersona.role === 'corporate_admin' || activePersona.role === 'platform_admin' || activePersona.isCompanyAdmin) && (
+                      <button
+                        onClick={() => {
+                          setMobileMenuOpen(false);
+                          onOpenCompanyAdminWizard();
+                        }}
+                        className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs transition-all shadow-md cursor-pointer"
+                      >
+                        <Crown className="w-3.5 h-3.5" />
+                        <span>Launch 7-Step Setup Wizard</span>
+                      </button>
+                    )}
+                  </div>
+                )}
 
                 {/* Section 1: Core Live Hub */}
                 <div className="space-y-1">

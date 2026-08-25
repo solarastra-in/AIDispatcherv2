@@ -29,7 +29,19 @@ import {
   EyeOff,
   AlertTriangle,
   Crown,
-  UserCheck
+  UserCheck,
+  FileSpreadsheet,
+  Upload,
+  Download,
+  FileText,
+  ShieldAlert,
+  ArrowRight,
+  UserCog,
+  Filter,
+  CheckCircle,
+  Copy,
+  Info,
+  ArrowLeft
 } from 'lucide-react';
 import { 
   CompanyFirestore, 
@@ -43,7 +55,8 @@ import {
   recordAuditLogToFirestore,
   logEmailToFirestore,
   saveSmtpSettingsToFirestore,
-  loadSmtpSettingsFromFirestore
+  loadSmtpSettingsFromFirestore,
+  CompanySsoSettings
 } from '../lib/firebase';
 import { CompanyAdminUser, CorporateAdminPrivileges } from '../types';
 import { resolveApiUrl } from '../lib/firebaseClient';
@@ -234,12 +247,136 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
   const [newCompanySmtpAlerts, setNewCompanySmtpAlerts] = useState<boolean>(true);
   const [isSubmittingCompany, setIsSubmittingCompany] = useState<boolean>(false);
 
-  // Initial Corporate Admin during New Company Creation
-  const [provisionInitialCorpAdmin, setProvisionInitialCorpAdmin] = useState<boolean>(true);
+  // Designated Corporate Admin Form State
   const [newCorpAdminName, setNewCorpAdminName] = useState<string>('Elena Rostova');
   const [newCorpAdminEmail, setNewCorpAdminEmail] = useState<string>('elena.admin@solarastra.in');
   const [newCorpAdminTitle, setNewCorpAdminTitle] = useState<string>('Director of AI Engineering');
   const [newCorpAdminPrivileges, setNewCorpAdminPrivileges] = useState<CorporateAdminPrivileges>(DEFAULT_CORPORATE_PRIVILEGES);
+
+  // Multi-Step Create Company Wizard State (5 Steps as requested)
+  // Step 1: Define Company Name
+  // Step 2: Input Company Admin Email
+  // Step 3: Confirm budgets, models and other relevant details
+  // Step 4: Send email notification to Company Admin with detailed steps to setup
+  // Step 5: Confirm Setup
+  const [companyWizardStep, setCompanyWizardStep] = useState<1 | 2 | 3 | 4 | 5>(1);
+  const [hasAttemptedAdminStep, setHasAttemptedAdminStep] = useState<boolean>(false);
+  const [adminStepError, setAdminStepError] = useState<string | null>(null);
+  const [customSetupInstructions, setCustomSetupInstructions] = useState<string>(
+    'Please follow the steps below to configure your corporate teams, connect enterprise BYOK keys, and allocate member quotas.'
+  );
+  const [isSendingWizardEmail, setIsSendingWizardEmail] = useState<boolean>(false);
+  const [wizardEmailDispatchStatus, setWizardEmailDispatchStatus] = useState<{
+    sent: boolean;
+    timestamp?: string;
+    message?: string;
+    latencyMs?: number;
+    error?: string;
+  } | null>(null);
+  const [autoDispatchOnConfirm, setAutoDispatchOnConfirm] = useState<boolean>(true);
+  const [wizardCompletedCompany, setWizardCompletedCompany] = useState<CompanyFirestore | null>(null);
+
+  // Helper for email regex validation
+  const isValidEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+
+  // Step validation helpers
+  const isWizardStep1Valid = Boolean(
+    newCompanyName.trim().length >= 2 && 
+    newCompanyDomain.trim().length >= 2 && 
+    (!newCompanyBillingEmail.trim() || isValidEmail(newCompanyBillingEmail))
+  );
+
+  const isWizardStep2Valid = Boolean(
+    newCorpAdminName.trim().length >= 2 && 
+    newCorpAdminEmail.trim().length >= 3 && 
+    isValidEmail(newCorpAdminEmail)
+  );
+
+  const isWizardStep3Valid = Boolean(
+    newCompanyModels.length > 0 && 
+    newCompanyQuota > 0 && 
+    newCompanyBudget > 0
+  );
+
+  const isWizardStep4Valid = Boolean(
+    isWizardStep1Valid && isWizardStep2Valid && isWizardStep3Valid
+  );
+
+  const handleOpenCreateCompanyWizard = () => {
+    setCompanyWizardStep(1);
+    setHasAttemptedAdminStep(false);
+    setAdminStepError(null);
+    setWizardEmailDispatchStatus(null);
+    setWizardCompletedCompany(null);
+    setShowOnboardCompanyModal(true);
+  };
+
+  const handleSendWizardSetupEmail = async () => {
+    const cleanAdminEmail = newCorpAdminEmail.trim().toLowerCase();
+    if (!cleanAdminEmail || !isValidEmail(cleanAdminEmail)) {
+      setAdminStepError('Please input a valid Company Admin email in Step 2 before testing email delivery.');
+      return;
+    }
+
+    setIsSendingWizardEmail(true);
+    setWizardEmailDispatchStatus(null);
+
+    try {
+      const companyVars = {
+        '{{recipient_name}}': newCorpAdminName.trim() || 'Company Administrator',
+        '{{recipient_email}}': cleanAdminEmail,
+        '{{company_name}}': newCompanyName.trim() || 'Enterprise Workspace',
+        '{{allocated_tokens}}': `${newCompanyQuota.toLocaleString()} tokens / month`,
+        '{{budget_limit}}': `$${newCompanyBudget.toLocaleString()} / month`,
+        '{{tenant_domain}}': newCompanyDomain.trim() || 'enterprise.ai',
+        '{{authorized_models}}': newCompanyModels.join(', '),
+        '{{routing_priority}}': newCompanyRouting === 'byok_first' ? 'BYOK Dedicated Priority' : 'Zero-Markup Flat-Rate Subscriptions',
+        '{{custom_message}}': customSetupInstructions || 'Follow the step-by-step setup guide below to configure your corporate workspace.',
+      };
+
+      const res = await fetch(resolveApiUrl('/api/admin/smtp/send-test'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: cleanAdminEmail,
+          subject: `🏢 [WhyOr Enterprise] Setup Instructions: Your ${newCompanyName.trim() || 'Company'} AI Workspace is Ready`,
+          templateType: 'company_onboarded',
+          recipientName: newCorpAdminName.trim() || 'Company Administrator',
+          companyName: newCompanyName.trim() || 'Enterprise Workspace',
+          allocatedTokens: `${newCompanyQuota.toLocaleString()} tokens / month`,
+          budgetLimit: `$${newCompanyBudget.toLocaleString()} / month`,
+          tenantDomain: newCompanyDomain.trim() || 'enterprise.ai',
+          authorizedModels: newCompanyModels.join(', '),
+          routingPriority: newCompanyRouting === 'byok_first' ? 'BYOK Dedicated Priority' : 'Zero-Markup Flat-Rate Subscriptions',
+          customMessage: customSetupInstructions || 'Follow the step-by-step setup guide below to configure your corporate workspace.',
+          sentBy: currentUser?.email || 'solarastra.in@gmail.com',
+          variables: companyVars,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setWizardEmailDispatchStatus({
+          sent: true,
+          timestamp: new Date().toLocaleTimeString(),
+          message: `Setup instructions email dispatched via SMTP relay to ${cleanAdminEmail}`,
+          latencyMs: data.latencyMs,
+        });
+      } else {
+        setWizardEmailDispatchStatus({
+          sent: false,
+          error: data.error || 'Failed to dispatch email. Check SMTP server settings.',
+        });
+      }
+    } catch (err: any) {
+      setWizardEmailDispatchStatus({
+        sent: false,
+        error: err.message || 'Network error connecting to SMTP relay service.',
+      });
+    } finally {
+      setIsSendingWizardEmail(false);
+    }
+  };
 
   // New Team Form State
   const [newTeamName, setNewTeamName] = useState<string>('');
@@ -300,6 +437,51 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
     onConfirm: () => {}
   });
 
+  // Active tab inside selected company view: 'roster_teams' | 'bulk_seeding' | 'sso_directory'
+  const [activeSectionTab, setActiveSectionTab] = useState<'roster_teams' | 'bulk_seeding' | 'sso_directory'>('roster_teams');
+
+  // Guardrail Modal State (Enforcing Company Admin before creating teams/members)
+  const [showAdminRequiredGuardrailModal, setShowAdminRequiredGuardrailModal] = useState<boolean>(false);
+  const [guardrailPendingAction, setGuardrailPendingAction] = useState<'create_team' | 'invite_member' | 'bulk_upload' | null>(null);
+
+  // Bulk CSV Employee Seeding State
+  const [showBulkUploadModal, setShowBulkUploadModal] = useState<boolean>(false);
+  const [bulkCsvText, setBulkCsvText] = useState<string>(
+`Full Name, Email, Role, Team, Model Tier, Monthly Token Quota, Monthly Budget ($)
+Elena Rostova, elena.dev@testing123.com, Senior AI Developer, AI Core Lab, Frontier Tier 3, 25000000, 1000
+David Kim, david.k@testing123.com, AI / ML Engineer, AI Core Lab, Frontier Tier 3, 20000000, 800
+Sarah Jenkins, s.jenkins@testing123.com, Product Manager (AI), Product Innovation, General Tier 2, 10000000, 500
+Michael Chang, m.chang@testing123.com, Prompt & QA Engineer, Validation Team, Fast Tier 1, 10000000, 400
+Aisha Patel, aisha.p@testing123.com, Staff AI Researcher, Research & Deep Reasoning, Frontier Tier 3, 30000000, 1500`
+  );
+  const [bulkParsedMembers, setBulkParsedMembers] = useState<Array<{
+    id: string;
+    name: string;
+    email: string;
+    role: string;
+    teamName: string;
+    tierCap: string;
+    monthlyTokenQuota: number;
+    monthlyBudgetUsd: number;
+    status: 'valid' | 'invalid_email' | 'missing_fields' | 'duplicate';
+    errorMessage?: string;
+  }>>([]);
+  const [bulkAutoCreateTeams, setBulkAutoCreateTeams] = useState<boolean>(true);
+  const [bulkSendSmtpEmails, setBulkSendSmtpEmails] = useState<boolean>(true);
+  const [isImportingBulk, setIsImportingBulk] = useState<boolean>(false);
+
+  // Enterprise SSO & Domain Directory State
+  const [ssoDomainInput, setSsoDomainInput] = useState<string>('');
+  const [ssoAutoProvisionEnabled, setSsoAutoProvisionEnabled] = useState<boolean>(true);
+  const [ssoDefaultTeamId, setSsoDefaultTeamId] = useState<string>('');
+  const [ssoDefaultRole, setSsoDefaultRole] = useState<string>('Senior AI Developer');
+  const [ssoDefaultTierCap, setSsoDefaultTierCap] = useState<string>('Frontier Tier 3');
+  const [ssoDefaultMonthlyQuota, setSsoDefaultMonthlyQuota] = useState<number>(20_000_000);
+  const [ssoAutoDispatchEmail, setSsoAutoDispatchEmail] = useState<boolean>(true);
+  const [ssoTestEmail, setSsoTestEmail] = useState<string>('');
+  const [ssoTestOutput, setSsoTestOutput] = useState<{ match: boolean; details: any } | null>(null);
+  const [isSavingSso, setIsSavingSso] = useState<boolean>(false);
+
   // Fetch initial data from Firestore & SMTP status
   useEffect(() => {
     loadCloudData();
@@ -356,6 +538,377 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
 
   const selectedCompany = companies.find(c => c.id === selectedCompanyId) || companies[0] || DEFAULT_COMPANIES[0];
   const companyTeams = teams.filter(t => t.companyId === selectedCompany.id);
+  const hasNoAdmins = !selectedCompany.companyAdmins || selectedCompany.companyAdmins.length === 0;
+
+  // Sync SSO state when selected company changes
+  useEffect(() => {
+    if (selectedCompany) {
+      setSsoDomainInput(selectedCompany.ssoSettings?.ssoDomain || selectedCompany.domain || '');
+      setSsoAutoProvisionEnabled(selectedCompany.ssoSettings?.enabled ?? true);
+      setSsoDefaultTeamId(selectedCompany.ssoSettings?.defaultTeamId || (companyTeams[0]?.id || ''));
+      setSsoDefaultRole(selectedCompany.ssoSettings?.defaultRole || 'Senior AI Developer');
+      setSsoDefaultTierCap(selectedCompany.ssoSettings?.defaultTierCap || 'Frontier Tier 3');
+      setSsoDefaultMonthlyQuota(selectedCompany.ssoSettings?.defaultMonthlyTokenQuota || 20_000_000);
+      setSsoAutoDispatchEmail(selectedCompany.ssoSettings?.autoDispatchWelcomeEmail ?? true);
+      setSsoTestOutput(null);
+    }
+  }, [selectedCompanyId, selectedCompany]);
+
+  // Guardrail action openers
+  const handleOpenCreateTeamGuardrail = () => {
+    if (hasNoAdmins) {
+      setGuardrailPendingAction('create_team');
+      setShowAdminRequiredGuardrailModal(true);
+    } else {
+      setShowAddTeamModal(true);
+    }
+  };
+
+  const handleOpenInviteMemberGuardrail = (team?: TeamFirestore) => {
+    if (team) setActiveTeamForInvite(team);
+    if (hasNoAdmins) {
+      setGuardrailPendingAction('invite_member');
+      setShowAdminRequiredGuardrailModal(true);
+    } else {
+      setShowInviteMemberModal(true);
+    }
+  };
+
+  const handleOpenBulkUploadGuardrail = () => {
+    if (hasNoAdmins) {
+      setGuardrailPendingAction('bulk_upload');
+      setShowAdminRequiredGuardrailModal(true);
+    } else {
+      setShowBulkUploadModal(true);
+    }
+  };
+
+  // Promote Member to Corporate Admin
+  const handlePromoteMemberToAdmin = async (mem: any, team: TeamFirestore) => {
+    setConfirmDialog({
+      isOpen: true,
+      title: '👑 Promote to Corporate Administrator',
+      description: `Promote ${mem.name} (${mem.email}) from team '${team.name}' to Corporate Administrator for '${selectedCompany.name}'? They will be granted delegated authority over departmental teams, BYOK credentials, budgets, and employee onboarding.`,
+      confirmText: 'Promote to Corporate Admin',
+      onConfirm: async () => {
+        const newAdmin: CompanyAdminUser = {
+          id: `admin_corp_${Date.now().toString(36)}`,
+          name: mem.name,
+          email: mem.email.toLowerCase(),
+          role: 'corporate_admin',
+          title: mem.role || 'Corporate Administrator',
+          tierCap: mem.tierCap || 'Frontier Tier 3',
+          monthlyTokenQuota: mem.monthlyTokenQuota || selectedCompany.monthlyTokenQuota || 50_000_000,
+          monthlyTokensUsed: mem.monthlyTokensUsed || 0,
+          privileges: DEFAULT_CORPORATE_PRIVILEGES,
+          status: 'active',
+          assignedBy: currentUser?.email || 'solarastra.in@gmail.com',
+          assignedAt: new Date().toISOString(),
+          lastActiveAt: new Date().toISOString(),
+        };
+
+        const existingAdmins = selectedCompany.companyAdmins || [];
+        const updatedAdmins = [...existingAdmins.filter(a => a.email.toLowerCase() !== mem.email.toLowerCase()), newAdmin];
+
+        const updatedCompany: CompanyFirestore = {
+          ...selectedCompany,
+          companyAdmins: updatedAdmins,
+          companyAdminEmail: updatedAdmins[0]?.email || mem.email,
+          updatedAt: new Date().toISOString(),
+        };
+
+        setCompanies(companies.map(c => c.id === updatedCompany.id ? updatedCompany : c));
+        await saveCompanyToFirestore(updatedCompany);
+
+        await recordAuditLogToFirestore(
+          'Promote to Corporate Admin',
+          'governance',
+          currentUser?.email || 'solarastra.in@gmail.com',
+          `Promoted member '${mem.name}' (${mem.email}) to Corporate Administrator for '${selectedCompany.name}'.`
+        );
+
+        setNotice({
+          type: 'success',
+          text: `👑 Successfully promoted ${mem.name} (${mem.email}) to Corporate Administrator for ${selectedCompany.name}!`
+        });
+      }
+    });
+  };
+
+  // Parse Bulk CSV
+  const parseBulkCsv = (text: string) => {
+    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+    if (lines.length === 0) return [];
+
+    const rows: typeof bulkParsedMembers = [];
+    const seenEmails = new Set<string>();
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      // Skip header line
+      if (i === 0 && (line.toLowerCase().includes('email') || line.toLowerCase().includes('name'))) {
+        continue;
+      }
+
+      const parts = line.split(',').map(p => p.trim().replace(/^["']|["']$/g, ''));
+      if (parts.length < 2) continue;
+
+      const name = parts[0] || '';
+      const email = (parts[1] || '').toLowerCase();
+      const role = parts[2] || 'Senior AI Developer';
+      const teamName = parts[3] || 'AI Core Lab';
+      const tierCap = parts[4] || 'Frontier Tier 3';
+      const tokenQuota = Number(parts[5]) || 20_000_000;
+      const budget = Number(parts[6]) || 800;
+
+      let status: 'valid' | 'invalid_email' | 'missing_fields' | 'duplicate' = 'valid';
+      let errorMessage: string | undefined = undefined;
+
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!name || !email) {
+        status = 'missing_fields';
+        errorMessage = 'Missing name or email';
+      } else if (!emailRegex.test(email)) {
+        status = 'invalid_email';
+        errorMessage = 'Invalid email syntax';
+      } else if (seenEmails.has(email)) {
+        status = 'duplicate';
+        errorMessage = 'Duplicate email in roster';
+      } else {
+        seenEmails.add(email);
+      }
+
+      rows.push({
+        id: `bulk_${i}_${Date.now().toString(36)}`,
+        name,
+        email,
+        role,
+        teamName,
+        tierCap,
+        monthlyTokenQuota: tokenQuota,
+        monthlyBudgetUsd: budget,
+        status,
+        errorMessage
+      });
+    }
+
+    return rows;
+  };
+
+  // Execute Bulk Import
+  const handleExecuteBulkImport = async () => {
+    const validRows = bulkParsedMembers.filter(r => r.status === 'valid');
+    if (validRows.length === 0) {
+      setNotice({ type: 'error', text: 'No valid employee rows to import. Please check your CSV format.' });
+      return;
+    }
+
+    setIsImportingBulk(true);
+    try {
+      let currentTeams = [...teams];
+      const teamsToUpdate = new Map<string, TeamFirestore>();
+
+      for (const row of validRows) {
+        // Find or create team for this company
+        let targetTeam = currentTeams.find(
+          t => t.companyId === selectedCompany.id && t.name.toLowerCase() === row.teamName.toLowerCase()
+        );
+
+        if (!targetTeam) {
+          if (bulkAutoCreateTeams) {
+            const newTeamId = `team_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
+            targetTeam = {
+              id: newTeamId,
+              companyId: selectedCompany.id,
+              companyName: selectedCompany.name,
+              name: row.teamName,
+              leadEmail: row.email,
+              tierCap: row.tierCap || 'Frontier Tier 3 (Reasoning)',
+              monthlyTokenQuota: 50_000_000,
+              monthlyTokensUsed: 0,
+              monthlyBudgetUsd: 2500,
+              allowedModels: selectedCompany.allowedModels || ['gemini-3.7-flash', 'claude-3-7-sonnet-20250219', 'gpt-4o'],
+              members: [],
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            };
+            currentTeams.push(targetTeam);
+          } else {
+            targetTeam = currentTeams.find(t => t.companyId === selectedCompany.id);
+          }
+        }
+
+        if (targetTeam) {
+          const newMember = {
+            id: `mem_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`,
+            name: row.name,
+            email: row.email,
+            role: row.role,
+            tierCap: row.tierCap,
+            monthlyTokenQuota: row.monthlyTokenQuota,
+            monthlyTokensUsed: 0,
+            joinedAt: new Date().toISOString(),
+            status: 'active',
+            emailStatus: bulkSendSmtpEmails ? 'sent' : 'not_sent',
+          };
+
+          const existingMembers = targetTeam.members || [];
+          const filtered = existingMembers.filter(m => m.email.toLowerCase() !== row.email.toLowerCase());
+          const updatedTeam: TeamFirestore = {
+            ...targetTeam,
+            members: [...filtered, newMember],
+            updatedAt: new Date().toISOString(),
+          };
+
+          teamsToUpdate.set(targetTeam.id, updatedTeam);
+          currentTeams = currentTeams.map(t => t.id === targetTeam!.id ? updatedTeam : t);
+        }
+      }
+
+      // Persist all updated / created teams to Firestore
+      for (const team of Array.from(teamsToUpdate.values())) {
+        await saveTeamToFirestore(team);
+      }
+
+      setTeams(currentTeams);
+
+      await recordAuditLogToFirestore(
+        'Bulk Employee Seeding',
+        'onboarding',
+        currentUser?.email || 'solarastra.in@gmail.com',
+        `Bulk seeded ${validRows.length} employees across ${teamsToUpdate.size} teams for company '${selectedCompany.name}'.`
+      );
+
+      // Dispatch background SMTP welcome emails if requested
+      if (bulkSendSmtpEmails) {
+        for (const row of validRows) {
+          fetch(resolveApiUrl('/api/admin/smtp/send-test'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              to: row.email,
+              subject: `🚀 [WhyOr Dispatch] Welcome to ${selectedCompany.name} AI Lab — Workspace Credentials & Token Quota`,
+              templateType: 'member_invited',
+              recipientName: row.name,
+              teamName: row.teamName,
+              companyName: selectedCompany.name,
+              allocatedTokens: `${(row.monthlyTokenQuota / 1_000_000).toFixed(0)}M tokens / month`,
+              budgetLimit: `$${row.monthlyBudgetUsd.toLocaleString()} / month`,
+              assignedRole: row.role,
+              tierCap: row.tierCap,
+              sentBy: currentUser?.email || 'solarastra.in@gmail.com',
+            }),
+          }).catch(() => {});
+        }
+      }
+
+      setShowBulkUploadModal(false);
+      setNotice({
+        type: 'success',
+        text: `✓ Successfully seeded ${validRows.length} employees across ${teamsToUpdate.size} teams for ${selectedCompany.name}!`
+      });
+    } catch (err: any) {
+      setNotice({
+        type: 'error',
+        text: `Bulk import failed: ${err?.message || err}`
+      });
+    } finally {
+      setIsImportingBulk(false);
+    }
+  };
+
+  // Save SSO Settings
+  const handleSaveSsoSettings = async () => {
+    setIsSavingSso(true);
+    try {
+      const ssoSettings: CompanySsoSettings = {
+        enabled: ssoAutoProvisionEnabled,
+        ssoDomain: ssoDomainInput.trim() || selectedCompany.domain,
+        defaultTeamId: ssoDefaultTeamId || companyTeams[0]?.id,
+        defaultRole: ssoDefaultRole,
+        defaultTierCap: ssoDefaultTierCap,
+        defaultMonthlyTokenQuota: ssoDefaultMonthlyQuota,
+        autoDispatchWelcomeEmail: ssoAutoDispatchEmail
+      };
+
+      const updatedCompany: CompanyFirestore = {
+        ...selectedCompany,
+        ssoSettings,
+        updatedAt: new Date().toISOString()
+      };
+
+      setCompanies(companies.map(c => c.id === updatedCompany.id ? updatedCompany : c));
+      await saveCompanyToFirestore(updatedCompany);
+
+      fetch(resolveApiUrl(`/api/admin/companies/${selectedCompany.id}`), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ssoDomain: ssoSettings.ssoDomain,
+          domain: ssoSettings.ssoDomain
+        })
+      }).catch(() => {});
+
+      await recordAuditLogToFirestore(
+        'Update SSO & Directory Settings',
+        'governance',
+        currentUser?.email || 'solarastra.in@gmail.com',
+        `Updated SSO auto-provisioning rules for '${selectedCompany.name}' (domain: ${ssoSettings.ssoDomain}, auto-provision: ${ssoSettings.enabled}).`
+      );
+
+      setNotice({
+        type: 'success',
+        text: `🔐 Enterprise SSO & Directory settings saved for ${selectedCompany.name}!`
+      });
+    } catch (err: any) {
+      setNotice({
+        type: 'error',
+        text: `Failed to save SSO settings: ${err?.message || err}`
+      });
+    } finally {
+      setIsSavingSso(false);
+    }
+  };
+
+  // Test SSO Match Simulator
+  const handleTestSsoMatch = (email: string) => {
+    if (!email || !email.includes('@')) {
+      setSsoTestOutput({
+        match: false,
+        details: { reason: 'Please enter a valid email address with domain (e.g. dev1@testing123.com)' }
+      });
+      return;
+    }
+
+    const domain = email.split('@')[1]?.toLowerCase().trim();
+    const configuredDomain = (ssoDomainInput || selectedCompany.ssoSettings?.ssoDomain || selectedCompany.domain || '').toLowerCase().trim();
+
+    if (domain === configuredDomain) {
+      setSsoTestOutput({
+        match: true,
+        details: {
+          email,
+          domain,
+          company: selectedCompany.name,
+          teamName: companyTeams.find(t => t.id === ssoDefaultTeamId)?.name || companyTeams[0]?.name || 'AI Core Lab',
+          role: ssoDefaultRole,
+          tierCap: ssoDefaultTierCap,
+          quota: `${(ssoDefaultMonthlyQuota / 1_000_000).toFixed(0)}M tokens/month`,
+          status: ssoAutoProvisionEnabled ? 'Auto-Provision Approved' : 'SSO Domain Matched (Auto-Provision Disabled)'
+        }
+      });
+    } else {
+      setSsoTestOutput({
+        match: false,
+        details: {
+          email,
+          domain,
+          configuredDomain,
+          reason: `Domain '@${domain}' does not match company SSO domain '@${configuredDomain}'.`
+        }
+      });
+    }
+  };
 
   // Model selection toggler for Company
   const toggleCompanyModel = (modelId: string) => {
@@ -380,9 +933,42 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
   };
 
   // Create Company Handler with Optimistic UI & Rollback on duplicate / error
-  const handleOnboardCompanySubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newCompanyName.trim() || isSubmittingCompany) return;
+  const handleOnboardCompanySubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (isSubmittingCompany) return;
+
+    if (!newCompanyName.trim() || newCompanyName.trim().length < 2) {
+      setCompanyWizardStep(1);
+      setNotice({
+        type: 'error',
+        text: 'Company Legal Name is required (minimum 2 characters).'
+      });
+      return;
+    }
+
+    if (!newCompanyDomain.trim() || newCompanyDomain.trim().length < 2) {
+      setCompanyWizardStep(1);
+      setNotice({
+        type: 'error',
+        text: 'Corporate Email Domain is required (e.g. acme.com).'
+      });
+      return;
+    }
+
+    // Strict Enforcement of Designated Corporate Admin
+    const cleanAdminEmail = newCorpAdminEmail.trim().toLowerCase();
+    const cleanAdminName = newCorpAdminName.trim();
+    
+    if (!cleanAdminEmail || !isValidEmail(cleanAdminEmail) || !cleanAdminName || cleanAdminName.length < 2) {
+      setCompanyWizardStep(2);
+      setHasAttemptedAdminStep(true);
+      setAdminStepError('A designated Company Administrator with a valid work email and full name is strictly required.');
+      setNotice({
+        type: 'error',
+        text: 'Enterprise Policy Block: Setup failed because no valid Company Administrator account is linked. Please provide a valid admin email to proceed.'
+      });
+      return;
+    }
 
     const trimmedName = newCompanyName.trim();
     const trimmedDomain = newCompanyDomain.trim() || 'enterprise.ai';
@@ -394,25 +980,22 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
     setIsSubmittingCompany(true);
     const companyId = `comp_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
     
-    // Build initial corporate admin user if provisioned
-    const initialAdmins: CompanyAdminUser[] = [];
-    if (provisionInitialCorpAdmin && newCorpAdminEmail.trim()) {
-      initialAdmins.push({
-        id: `admin_corp_${Date.now().toString(36)}`,
-        name: newCorpAdminName.trim() || `${trimmedName} Admin`,
-        email: newCorpAdminEmail.trim().toLowerCase(),
-        role: 'corporate_admin',
-        title: newCorpAdminTitle.trim() || 'Director of AI Engineering',
-        tierCap: 'Frontier Tier 3',
-        monthlyTokenQuota: Number(newCompanyQuota),
-        monthlyTokensUsed: 0,
-        privileges: newCorpAdminPrivileges,
-        status: 'active',
-        assignedBy: currentUser?.email || 'solarastra.in@gmail.com',
-        assignedAt: new Date().toISOString(),
-        lastActiveAt: new Date().toISOString(),
-      });
-    }
+    // Build initial corporate admin user (MANDATORY for enterprise governance)
+    const initialAdmins: CompanyAdminUser[] = [{
+      id: `admin_corp_${Date.now().toString(36)}`,
+      name: newCorpAdminName.trim() || `${trimmedName} Admin`,
+      email: newCorpAdminEmail.trim().toLowerCase(),
+      role: 'corporate_admin',
+      title: newCorpAdminTitle.trim() || 'Director of AI Engineering',
+      tierCap: 'Frontier Tier 3',
+      monthlyTokenQuota: Number(newCompanyQuota),
+      monthlyTokensUsed: 0,
+      privileges: newCorpAdminPrivileges,
+      status: 'active',
+      assignedBy: currentUser?.email || 'solarastra.in@gmail.com',
+      assignedAt: new Date().toISOString(),
+      lastActiveAt: new Date().toISOString(),
+    }];
 
     const newCompany: CompanyFirestore = {
       id: companyId,
@@ -430,6 +1013,14 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
       superAdminEmail: currentUser?.email || 'solarastra.in@gmail.com',
       companyAdminEmail: initialAdmins[0]?.email || newCompanyBillingEmail.trim(),
       companyAdmins: initialAdmins,
+      ssoSettings: {
+        enabled: true,
+        ssoDomain: trimmedDomain,
+        defaultRole: 'Senior AI Developer',
+        defaultTierCap: 'Frontier Tier 3',
+        defaultMonthlyTokenQuota: 20_000_000,
+        autoDispatchWelcomeEmail: true
+      },
       status: 'active',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -438,10 +1029,11 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
     // 1. Optimistically update client-side UI immediately
     setCompanies([newCompany, ...previousCompanies.filter(c => c.id !== companyId)]);
     setSelectedCompanyId(companyId);
-    setShowOnboardCompanyModal(false);
+    setWizardCompletedCompany(newCompany);
+    setCompanyWizardStep(5);
     setNotice({
       type: 'info',
-      text: `Optimistically adding customer '${newCompany.name}' with Delegated Corporate Admin... Verifying with server registry.`
+      text: `Provisioning enterprise tenant '${newCompany.name}' with Delegated Corporate Admin...`
     });
 
     try {
@@ -489,8 +1081,8 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
         `Onboarded company '${newCompany.name}' (${newCompany.domain}) with Corporate Admin '${initialAdmins[0]?.email || 'None'}' and ${newCompany.monthlyTokenQuota.toLocaleString()} token cap.`
       );
 
-      // 5. If SMTP alerts enabled, dispatch welcome notification to billing & corporate admin
-      if (newCompanySmtpAlerts) {
+      // 5. If SMTP alerts or auto-dispatch enabled, dispatch detailed setup steps email to corporate admin
+      if (newCompanySmtpAlerts || autoDispatchOnConfirm) {
         const companyVars = {
           '{{recipient_name}}': initialAdmins[0]?.name || newCompany.name + ' Administrator',
           '{{recipient_email}}': initialAdmins[0]?.email || newCompany.billingEmail,
@@ -500,7 +1092,7 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
           '{{tenant_domain}}': newCompany.domain,
           '{{authorized_models}}': newCompany.allowedModels.join(', '),
           '{{routing_priority}}': newCompany.routingPriority === 'byok_first' ? 'BYOK Dedicated Priority' : 'Zero-Markup Flat-Rate Subscriptions',
-          '{{custom_message}}': `Enterprise workspace for ${newCompany.name} has been provisioned on WhyOr Dispatch AI with delegated Corporate Admin authority.`,
+          '{{custom_message}}': customSetupInstructions || `Enterprise workspace for ${newCompany.name} has been provisioned on WhyOr Dispatch AI with delegated Corporate Admin authority.`,
         };
 
         const targetEmail = initialAdmins[0]?.email || newCompany.billingEmail;
@@ -509,7 +1101,7 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             to: targetEmail,
-            subject: `🏢 [WhyOr Dispatch] Enterprise Provisioned: ${newCompany.name} - Quota & Workspace Credentials`,
+            subject: `🏢 [WhyOr Enterprise] Setup Instructions: Your ${newCompany.name} AI Workspace is Ready`,
             templateType: 'company_onboarded',
             recipientName: initialAdmins[0]?.name || newCompany.name + ' Administrator',
             companyName: newCompany.name,
@@ -518,27 +1110,32 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
             tenantDomain: newCompany.domain,
             authorizedModels: newCompany.allowedModels.join(', '),
             routingPriority: newCompany.routingPriority === 'byok_first' ? 'BYOK Dedicated Priority' : 'Zero-Markup Flat-Rate Subscriptions',
-            customMessage: `Company ${newCompany.name} has been successfully provisioned on WhyOr Dispatch AI by SuperAdmin ${currentUser?.email || 'solarastra.in@gmail.com'}. Allocated quota: ${newCompany.monthlyTokenQuota.toLocaleString()} tokens/mo.`,
+            customMessage: customSetupInstructions || `Company ${newCompany.name} has been successfully provisioned on WhyOr Dispatch AI by SuperAdmin ${currentUser?.email || 'solarastra.in@gmail.com'}. Allocated quota: ${newCompany.monthlyTokenQuota.toLocaleString()} tokens/mo.`,
             sentBy: currentUser?.email || 'solarastra.in@gmail.com',
             variables: companyVars,
           }),
-        }).catch((mailErr) => console.warn('SMTP welcome email skipped/failed:', mailErr));
+        }).then(() => {
+          setWizardEmailDispatchStatus({
+            sent: true,
+            timestamp: new Date().toLocaleTimeString(),
+            message: `Setup email sent to ${targetEmail}`,
+          });
+        }).catch((mailErr) => {
+          console.warn('SMTP welcome email skipped/failed:', mailErr);
+        });
       }
 
       // 6. Final success toast
       setNotice({
         type: 'success',
-        text: `Customer '${newCompany.name}' and Corporate Admin '${initialAdmins[0]?.email || 'default'}' successfully provisioned.`,
+        text: `Enterprise tenant '${newCompany.name}' and Corporate Admin '${initialAdmins[0]?.email || 'default'}' successfully provisioned!`,
       });
-
-      // Clear input fields on confirmed success
-      setNewCompanyName('');
-      setNewCompanyDomain('');
     } catch (err: any) {
       // 7. ROLLBACK: Revert the visual addition immediately and display error toast
       setCompanies(previousCompanies);
       setSelectedCompanyId(previousSelectedCompanyId);
-      setShowOnboardCompanyModal(true); // Re-open modal to preserve user edits
+      setWizardCompletedCompany(null);
+      setCompanyWizardStep(5);
 
       const isDuplicate =
         err?.message?.includes('DUPLICATE') ||
@@ -1207,11 +1804,11 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
 
           <div className="flex items-center gap-3">
             <button
-              onClick={() => setShowOnboardCompanyModal(true)}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-semibold shadow-lg shadow-purple-600/30 transition-all cursor-pointer"
+              onClick={handleOpenCreateCompanyWizard}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-700 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-semibold shadow-lg shadow-purple-600/30 transition-all cursor-pointer"
             >
               <Building2 className="w-4 h-4" />
-              <span>+ Onboard New Company</span>
+              <span>+ Create Company Wizard</span>
             </button>
             
             <button
@@ -1356,6 +1953,40 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
 
       {/* Selected Company Deep Dive & Team Governance */}
       <div className="bg-slate-900/60 border border-white/10 rounded-2xl p-6 backdrop-blur-xl space-y-6">
+        {/* Zero-Admin Enterprise Governance Warning Banner */}
+        {hasNoAdmins && (
+          <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-950/80 via-slate-900/90 to-purple-950/80 border-2 border-amber-500/60 shadow-xl space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-400/50 flex items-center justify-center shrink-0">
+                  <ShieldAlert className="w-6 h-6" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-sm font-bold text-amber-300">
+                      Corporate Administrator Required (0 Appointed)
+                    </h4>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-mono uppercase bg-amber-500/30 text-amber-200 border border-amber-400/50 font-semibold">
+                      Enterprise Policy
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                    <strong className="text-white">{selectedCompany.name}</strong> currently has no Corporate Administrator. Under enterprise governance policy, SuperAdmin must appoint a Company Admin before departmental teams or subordinate users are created. The Company Admin will then seed employees through SSO, CSV upload, or manual invites.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleOpenCorpAdminModal()}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-purple-600 hover:from-amber-400 hover:to-purple-500 text-slate-950 font-bold text-xs shadow-lg shadow-amber-500/30 transition-all cursor-pointer whitespace-nowrap self-start sm:self-auto"
+              >
+                <Crown className="w-4 h-4" />
+                <span>👑 Appoint Company Admin Now</span>
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Company Header Info */}
         <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 pb-4 border-b border-white/10">
           <div className="space-y-1">
@@ -1366,15 +1997,32 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
               <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono uppercase bg-indigo-500/20 text-indigo-300 border border-indigo-400/30">
                 {selectedCompany.industry}
               </span>
+              {hasNoAdmins ? (
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono uppercase bg-amber-500/20 text-amber-300 border border-amber-400/30 flex items-center gap-1 font-semibold">
+                  <AlertTriangle className="w-3 h-3" /> No Admin Appointed
+                </span>
+              ) : (
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono uppercase bg-purple-500/20 text-purple-300 border border-purple-400/30 flex items-center gap-1 font-semibold">
+                  <Crown className="w-3 h-3 text-amber-400" /> {selectedCompany.companyAdmins?.length} Admin(s)
+                </span>
+              )}
             </div>
             <p className="text-xs text-slate-400">
-              Billing & Alert Email: <span className="text-slate-200 font-mono">{selectedCompany.billingEmail}</span> • Routing Policy: <span className="text-purple-300 font-mono">{selectedCompany.routingPriority.replace('_', ' ')}</span>
+              Billing & Alert Email: <span className="text-slate-200 font-mono">{selectedCompany.billingEmail}</span> • Domain: <span className="text-purple-300 font-mono">@{selectedCompany.domain}</span> • Routing: <span className="text-purple-300 font-mono">{selectedCompany.routingPriority.replace('_', ' ')}</span>
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2.5">
             <button
-              onClick={() => setShowAddTeamModal(true)}
+              onClick={handleOpenBulkUploadGuardrail}
+              className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-purple-300 hover:text-white border border-purple-500/30 text-xs font-semibold shadow-md transition-all cursor-pointer"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              <span>📁 Bulk Seed Employees</span>
+            </button>
+
+            <button
+              onClick={handleOpenCreateTeamGuardrail}
               className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-md transition-all cursor-pointer"
             >
               <Users className="w-3.5 h-3.5" />
@@ -1432,7 +2080,7 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
                   </span>
                 </div>
                 <p className="text-xs text-slate-400">
-                  SuperAdmin-delegated executives who can create teams, provision BYOK keys, manage departmental budgets, and invite engineers.
+                  SuperAdmin-delegated executives who can seed employees via SSO/CSV, create teams, provision BYOK keys, manage budgets, and configure policies.
                 </p>
               </div>
             </div>
@@ -1448,16 +2096,16 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
           </div>
 
           {(!selectedCompany.companyAdmins || selectedCompany.companyAdmins.length === 0) ? (
-            <div className="p-4 rounded-xl bg-slate-950/60 border border-dashed border-white/10 text-center space-y-2">
-              <p className="text-xs text-slate-400">
-                No Corporate Admin has been assigned to <strong className="text-slate-200">{selectedCompany.name}</strong> yet.
+            <div className="p-4 rounded-xl bg-slate-950/60 border border-dashed border-amber-500/40 text-center space-y-2">
+              <p className="text-xs text-amber-200">
+                No Corporate Admin has been assigned to <strong className="text-white">{selectedCompany.name}</strong> yet.
               </p>
               <button
                 type="button"
                 onClick={() => handleOpenCorpAdminModal()}
-                className="text-xs text-purple-400 hover:text-purple-300 underline font-semibold cursor-pointer"
+                className="text-xs text-amber-400 hover:text-amber-300 underline font-semibold cursor-pointer"
               >
-                Appoint Corporate Admin with Team & BYOK Creation Privileges →
+                Appoint Corporate Admin Now to Enable Team & Employee Seeding →
               </button>
             </div>
           ) : (
@@ -1505,7 +2153,7 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
                           )}
                           {admin.privileges.canInviteMembers && (
                             <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-purple-950/70 border border-purple-500/30 text-purple-300">
-                              ✓ Invite Engineers
+                              ✓ Invite & Seed Engineers
                             </span>
                           )}
                           {admin.privileges.canConfigureRouting && (
@@ -1568,574 +2216,1783 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
           )}
         </div>
 
-        {/* Teams & Members Section */}
-        <div className="space-y-4 pt-2">
-          {/* Outbound SMTP Mail Gateway Status Card */}
-          <div className="p-4 rounded-2xl bg-gradient-to-r from-purple-950/40 via-slate-900 to-indigo-950/40 border border-purple-500/20 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-300">
-                <Mail className="w-5 h-5" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h5 className="text-xs font-bold text-white uppercase font-mono tracking-wider">
-                    Enterprise Outbound SMTP Mail Relay
-                  </h5>
-                  {smtpStatus?.hasPassword ? (
-                    <span className="px-2 py-0.5 rounded-full text-[9px] font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
-                      <CheckCircle2 className="w-2.5 h-2.5" />
-                      Live Ready
-                    </span>
-                  ) : (
-                    <span className="px-2 py-0.5 rounded-full text-[9px] font-mono bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
-                      <AlertTriangle className="w-2.5 h-2.5" />
-                      Password Configuration Needed
-                    </span>
-                  )}
-                </div>
-                <p className="text-[11px] text-slate-400 font-mono mt-0.5">
-                  Host: <span className="text-slate-300">{smtpStatus?.host || 'smtp.gmail.com'}:{smtpStatus?.port || 587}</span> • Sender: <span className="text-purple-300">{smtpStatus?.fromEmail || 'solarastra.in@gmail.com'}</span>
-                  {!smtpStatus?.hasPassword && (
-                    <span className="text-amber-300 ml-1.5">— Provide a 16-character Gmail App Password to dispatch live invitations.</span>
-                  )}
-                </p>
-              </div>
-            </div>
+        {/* Navigation Tabs for Company Hub: Teams/Roster, Bulk CSV Seeding, SSO & Directory Sync */}
+        <div className="flex flex-wrap items-center gap-2 border-b border-white/10 pb-3">
+          <button
+            type="button"
+            onClick={() => setActiveSectionTab('roster_teams')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+              activeSectionTab === 'roster_teams'
+                ? 'bg-purple-600/30 text-purple-200 border border-purple-500/40 shadow-sm'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
+            }`}
+          >
+            <Users className="w-4 h-4" />
+            <span>Departmental Teams & Roster ({companyTeams.length} Teams)</span>
+          </button>
 
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setTargetMemberForEmail(null);
-                  setShowSmtpQuickConfigModal(true);
-                }}
-                className="px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-purple-600/20 cursor-pointer"
-              >
-                <Key className="w-3.5 h-3.5" />
-                <span>Configure SMTP Credentials</span>
-              </button>
-            </div>
-          </div>
+          <button
+            type="button"
+            onClick={() => setActiveSectionTab('bulk_seeding')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+              activeSectionTab === 'bulk_seeding'
+                ? 'bg-purple-600/30 text-purple-200 border border-purple-500/40 shadow-sm'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
+            }`}
+          >
+            <FileSpreadsheet className="w-4 h-4" />
+            <span>📁 Bulk Employee Seeding (CSV)</span>
+          </button>
 
-          <div className="flex items-center justify-between">
-            <h4 className="text-sm font-bold text-white flex items-center gap-2">
-              <Layers className="w-4 h-4 text-indigo-400" />
-              <span>Department Teams & Member Access Controls ({companyTeams.length})</span>
-            </h4>
-            <span className="text-xs text-slate-400">
-              Each team enforces isolated token quotas and model tier boundaries
-            </span>
-          </div>
-
-          {companyTeams.length === 0 ? (
-            <div className="p-8 rounded-2xl bg-slate-950/40 border border-white/5 text-center space-y-3">
-              <Users className="w-8 h-8 text-slate-500 mx-auto" />
-              <p className="text-xs text-slate-400">No teams created for {selectedCompany.name} yet.</p>
-              <button
-                onClick={() => setShowAddTeamModal(true)}
-                className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold cursor-pointer"
-              >
-                Create First Team
-              </button>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {companyTeams.map((team) => (
-                <div 
-                  key={team.id}
-                  className="p-5 rounded-2xl bg-slate-950/70 border border-white/10 space-y-4"
-                >
-                  {/* Team Top Strip */}
-                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                    <div className="space-y-0.5">
-                      <div className="flex items-center gap-2.5">
-                        <h5 className="text-sm font-bold text-white">{team.name}</h5>
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-purple-500/20 text-purple-300 border border-purple-400/30">
-                          {team.tierCap}
-                        </span>
-                      </div>
-                      <div className="text-xs text-slate-400 font-mono">
-                        Lead: <span className="text-slate-200">{team.leadEmail}</span> • Monthly Cap: <span className="text-indigo-300">{(team.monthlyTokenQuota / 1_000_000).toFixed(0)}M tokens</span> • Budget: <span className="text-emerald-400">${team.monthlyBudgetUsd}/mo</span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => {
-                          setActiveTeamForInvite(team);
-                          setShowInviteMemberModal(true);
-                        }}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-medium shadow transition-all cursor-pointer"
-                      >
-                        <UserPlus className="w-3.5 h-3.5" />
-                        <span>+ Invite Member (SMTP)</span>
-                      </button>
-
-                      <button
-                        onClick={() => handleDeleteTeam(team.id)}
-                        className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors"
-                        title="Delete Team"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Members Table */}
-                  <div className="overflow-x-auto border border-white/5 rounded-xl">
-                    <table className="w-full text-left text-xs">
-                      <thead className="bg-slate-900/80 text-slate-400 font-mono text-[10px] uppercase border-b border-white/10">
-                        <tr>
-                          <th className="py-2.5 px-3">Member & Role</th>
-                          <th className="py-2.5 px-3">Email Identity</th>
-                          <th className="py-2.5 px-3">Model Tier Limit</th>
-                          <th className="py-2.5 px-3">Monthly Token Usage</th>
-                          <th className="py-2.5 px-3">Invite & Email Status</th>
-                          <th className="py-2.5 px-3 text-right">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-white/5">
-                        {team.members.map((mem: any) => {
-                          const memUsagePct = Math.min(100, Math.round(((mem.monthlyTokensUsed || 0) / (mem.monthlyTokenQuota || 1)) * 100));
-                          const isDispatchingThis = dispatchingMemberId === mem.id;
-
-                          return (
-                            <tr key={mem.id} className="hover:bg-white/[0.02]">
-                              <td className="py-2.5 px-3">
-                                <div className="font-semibold text-slate-200">{mem.name}</div>
-                                <div className="text-[10px] text-slate-400 font-mono">{mem.role}</div>
-                              </td>
-                              <td className="py-2.5 px-3 font-mono text-purple-300">
-                                {mem.email}
-                              </td>
-                              <td className="py-2.5 px-3">
-                                <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-slate-900 border border-white/10 text-slate-300">
-                                  {mem.tierCap}
-                                </span>
-                              </td>
-                              <td className="py-2.5 px-3">
-                                <div className="space-y-1 w-28">
-                                  <div className="flex justify-between text-[10px] font-mono">
-                                    <span className="text-slate-300">{((mem.monthlyTokensUsed || 0) / 1_000_000).toFixed(1)}M</span>
-                                    <span className="text-slate-500">/ {((mem.monthlyTokenQuota || 10_000_000) / 1_000_000).toFixed(0)}M</span>
-                                  </div>
-                                  <div className="w-full h-1 bg-slate-800 rounded-full overflow-hidden">
-                                    <div 
-                                      className="h-full bg-indigo-500 rounded-full" 
-                                      style={{ width: `${memUsagePct}%` }} 
-                                    />
-                                  </div>
-                                </div>
-                              </td>
-                              <td className="py-2.5 px-3">
-                                {mem.emailStatus === 'sent' ? (
-                                  <div className="space-y-0.5">
-                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-mono bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                                      <CheckCircle2 className="w-2.5 h-2.5 text-emerald-400" />
-                                      Invite Dispatched
-                                    </span>
-                                    {mem.emailMessageId && (
-                                      <div className="text-[8px] font-mono text-slate-500 truncate max-w-[140px]" title={mem.emailMessageId}>
-                                        ID: {mem.emailMessageId}
-                                      </div>
-                                    )}
-                                  </div>
-                                ) : mem.emailStatus === 'pending_smtp' || mem.emailStatus === 'failed' ? (
-                                  <button
-                                    onClick={() => {
-                                      setTargetMemberForEmail({ member: mem, team });
-                                      setShowSmtpQuickConfigModal(true);
-                                    }}
-                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-mono bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500/25 transition-colors cursor-pointer"
-                                    title="Click to configure SMTP credentials and dispatch email"
-                                  >
-                                    <AlertTriangle className="w-2.5 h-2.5 text-amber-400" />
-                                    <span>SMTP Setup Required</span>
-                                  </button>
-                                ) : (
-                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-mono bg-slate-800 text-slate-400 border border-white/10">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
-                                    Not Dispatched
-                                  </span>
-                                )}
-                              </td>
-                              <td className="py-2.5 px-3 text-right">
-                                <div className="flex items-center justify-end gap-1.5">
-                                  <button
-                                    type="button"
-                                    disabled={isDispatchingThis}
-                                    onClick={() => handleSendMemberInviteEmail(mem, team)}
-                                    className="px-2.5 py-1 rounded-lg bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 text-[11px] font-mono flex items-center gap-1 transition-all cursor-pointer disabled:opacity-50"
-                                    title={`Dispatch live invitation email to ${mem.email}`}
-                                  >
-                                    {isDispatchingThis ? (
-                                      <>
-                                        <RefreshCw className="w-3 h-3 animate-spin text-purple-400" />
-                                        <span>Sending...</span>
-                                      </>
-                                    ) : (
-                                      <>
-                                        <Send className="w-3 h-3 text-purple-400" />
-                                        <span>{mem.emailStatus === 'sent' ? 'Resend' : 'Send Invite'}</span>
-                                      </>
-                                    )}
-                                  </button>
-
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setConfirmDialog({
-                                        isOpen: true,
-                                        title: 'Remove Team Member',
-                                        description: `Are you sure you want to remove member ${mem.name} (${mem.email}) from ${team.name}?`,
-                                        confirmText: 'Remove Member',
-                                        onConfirm: async () => {
-                                          const updatedTeam = {
-                                            ...team,
-                                            members: team.members.filter((m: any) => m.id !== mem.id),
-                                            updatedAt: new Date().toISOString(),
-                                          };
-                                          setTeams(teams.map(t => t.id === team.id ? updatedTeam : t));
-                                          await saveTeamToFirestore(updatedTeam);
-                                          setNotice({ type: 'info', text: `Removed ${mem.name} from ${team.name}.` });
-                                        }
-                                      });
-                                    }}
-                                    className="p-1 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded transition-colors"
-                                    title="Remove Member"
-                                  >
-                                    <Trash2 className="w-3 h-3" />
-                                  </button>
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+          <button
+            type="button"
+            onClick={() => setActiveSectionTab('sso_directory')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+              activeSectionTab === 'sso_directory'
+                ? 'bg-purple-600/30 text-purple-200 border border-purple-500/40 shadow-sm'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
+            }`}
+          >
+            <Globe className="w-4 h-4" />
+            <span>🔐 Enterprise SSO & Directory Sync</span>
+            {selectedCompany.ssoSettings?.enabled && (
+              <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+            )}
+          </button>
         </div>
-      </div>
 
-      {/* ==================== MODAL 1: ONBOARD NEW COMPANY ==================== */}
-      {showOnboardCompanyModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
-          <div className="bg-slate-900 border border-white/10 rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 shadow-2xl space-y-5">
-            <div className="flex items-center justify-between pb-4 border-b border-white/10">
+        {/* ========================================================================= */}
+        {/* SUB-VIEW 1: TEAMS & MEMBERS ROSTER                                         */}
+        {/* ========================================================================= */}
+        {activeSectionTab === 'roster_teams' && (
+          <div className="space-y-4 pt-1 animate-fadeIn">
+            {/* Outbound SMTP Mail Gateway Status Card */}
+            <div className="p-4 rounded-2xl bg-gradient-to-r from-purple-950/40 via-slate-900 to-indigo-950/40 border border-purple-500/20 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-purple-600/30 border border-purple-400/50 flex items-center justify-center text-purple-300">
-                  <Building2 className="w-5 h-5" />
+                <div className="w-9 h-9 rounded-xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-300">
+                  <Mail className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-white">
-                    Onboard New Enterprise Company
-                  </h3>
-                  <p className="text-xs text-slate-400">
-                    Provision a new corporate tenant with isolated model catalog and billing caps
+                  <div className="flex items-center gap-2">
+                    <h5 className="text-xs font-bold text-white uppercase font-mono tracking-wider">
+                      Enterprise Outbound SMTP Mail Relay
+                    </h5>
+                    {smtpStatus?.hasPassword ? (
+                      <span className="px-2 py-0.5 rounded-full text-[9px] font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                        <CheckCircle2 className="w-2.5 h-2.5" />
+                        Live Ready
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-full text-[9px] font-mono bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                        <AlertTriangle className="w-2.5 h-2.5" />
+                        Password Configuration Needed
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-400 font-mono mt-0.5">
+                    Host: <span className="text-slate-300">{smtpStatus?.host || 'smtp.gmail.com'}:{smtpStatus?.port || 587}</span> • Sender: <span className="text-purple-300">{smtpStatus?.fromEmail || 'solarastra.in@gmail.com'}</span>
+                    {!smtpStatus?.hasPassword && (
+                      <span className="text-amber-300 ml-1.5">— Provide a 16-character Gmail App Password to dispatch live invitations.</span>
+                    )}
                   </p>
                 </div>
               </div>
-              <button
-                onClick={() => setShowOnboardCompanyModal(false)}
-                className="text-slate-400 hover:text-white text-lg font-bold"
-              >
-                ✕
-              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTargetMemberForEmail(null);
+                    setShowSmtpQuickConfigModal(true);
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-purple-600/20 cursor-pointer"
+                >
+                  <Key className="w-3.5 h-3.5" />
+                  <span>Configure SMTP Credentials</span>
+                </button>
+              </div>
             </div>
 
-            <form onSubmit={handleOnboardCompanySubmit} className="space-y-4 text-xs">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <label className="text-slate-300 font-medium">Company Legal Name *</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. SolarAstra Energy Systems"
-                    value={newCompanyName}
-                    onChange={(e) => setNewCompanyName(e.target.value)}
-                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white font-sans focus:outline-none focus:border-purple-500"
-                  />
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                <Layers className="w-4 h-4 text-indigo-400" />
+                <span>Department Teams & Member Access Controls ({companyTeams.length})</span>
+              </h4>
+              <span className="text-xs text-slate-400">
+                Each team enforces isolated token quotas and model tier boundaries
+              </span>
+            </div>
+
+            {companyTeams.length === 0 ? (
+              <div className="p-8 rounded-2xl bg-slate-950/40 border border-white/5 text-center space-y-3">
+                <Users className="w-8 h-8 text-slate-500 mx-auto" />
+                <p className="text-xs text-slate-400">No teams created for {selectedCompany.name} yet.</p>
+                <button
+                  onClick={handleOpenCreateTeamGuardrail}
+                  className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold cursor-pointer"
+                >
+                  Create First Team
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {companyTeams.map((team) => (
+                  <div 
+                    key={team.id}
+                    className="p-5 rounded-2xl bg-slate-950/70 border border-white/10 space-y-4"
+                  >
+                    {/* Team Top Strip */}
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-2.5">
+                          <h5 className="text-sm font-bold text-white">{team.name}</h5>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-purple-500/20 text-purple-300 border border-purple-400/30">
+                            {team.tierCap}
+                          </span>
+                        </div>
+                        <div className="text-xs text-slate-400 font-mono">
+                          Lead: <span className="text-slate-200">{team.leadEmail}</span> • Monthly Cap: <span className="text-indigo-300">{(team.monthlyTokenQuota / 1_000_000).toFixed(0)}M tokens</span> • Budget: <span className="text-emerald-400">${team.monthlyBudgetUsd}/mo</span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => handleOpenInviteMemberGuardrail(team)}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-medium shadow transition-all cursor-pointer"
+                        >
+                          <UserPlus className="w-3.5 h-3.5" />
+                          <span>+ Invite Member (SMTP)</span>
+                        </button>
+
+                        <button
+                          onClick={() => handleDeleteTeam(team.id)}
+                          className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors"
+                          title="Delete Team"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Members Table */}
+                    <div className="overflow-x-auto border border-white/5 rounded-xl">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-900/80 text-slate-400 font-mono text-[10px] uppercase border-b border-white/10">
+                          <tr>
+                            <th className="py-2.5 px-3">Member & Role</th>
+                            <th className="py-2.5 px-3">Email Identity</th>
+                            <th className="py-2.5 px-3">Model Tier Limit</th>
+                            <th className="py-2.5 px-3">Monthly Token Usage</th>
+                            <th className="py-2.5 px-3">Invite & Email Status</th>
+                            <th className="py-2.5 px-3 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5">
+                          {team.members.map((mem: any) => {
+                            const memUsagePct = Math.min(100, Math.round(((mem.monthlyTokensUsed || 0) / (mem.monthlyTokenQuota || 1)) * 100));
+                            const isDispatchingThis = dispatchingMemberId === mem.id;
+                            const isCorpAdmin = selectedCompany.companyAdmins?.some(
+                              a => a.email.toLowerCase() === mem.email.toLowerCase()
+                            );
+
+                            return (
+                              <tr key={mem.id} className="hover:bg-white/[0.02]">
+                                <td className="py-2.5 px-3">
+                                  <div className="flex items-center gap-2">
+                                    <div className="font-semibold text-slate-200">{mem.name}</div>
+                                    {isCorpAdmin && (
+                                      <span className="px-1.5 py-0.2 rounded text-[9px] font-mono bg-amber-500/20 text-amber-300 border border-amber-400/40 flex items-center gap-1 font-semibold">
+                                        <Crown className="w-2.5 h-2.5" /> Admin
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-[10px] text-slate-400 font-mono">{mem.role}</div>
+                                </td>
+                                <td className="py-2.5 px-3 font-mono text-purple-300">
+                                  {mem.email}
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-slate-900 border border-white/10 text-slate-300">
+                                    {mem.tierCap}
+                                  </span>
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  <div className="space-y-1 w-28">
+                                    <div className="flex justify-between text-[10px] font-mono">
+                                      <span className="text-slate-300">{((mem.monthlyTokensUsed || 0) / 1_000_000).toFixed(1)}M</span>
+                                      <span className="text-slate-500">/ {((mem.monthlyTokenQuota || 10_000_000) / 1_000_000).toFixed(0)}M</span>
+                                    </div>
+                                    <div className="w-full h-1 bg-slate-800 rounded-full overflow-hidden">
+                                      <div 
+                                        className="h-full bg-indigo-500 rounded-full" 
+                                        style={{ width: `${memUsagePct}%` }} 
+                                      />
+                                    </div>
+                                  </div>
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  {mem.emailStatus === 'sent' ? (
+                                    <div className="space-y-0.5">
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-mono bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                                        <CheckCircle2 className="w-2.5 h-2.5 text-emerald-400" />
+                                        Invite Dispatched
+                                      </span>
+                                      {mem.emailMessageId && (
+                                        <div className="text-[8px] font-mono text-slate-500 truncate max-w-[140px]" title={mem.emailMessageId}>
+                                          ID: {mem.emailMessageId}
+                                        </div>
+                                      )}
+                                    </div>
+                                  ) : mem.emailStatus === 'pending_smtp' || mem.emailStatus === 'failed' ? (
+                                    <button
+                                      onClick={() => {
+                                        setTargetMemberForEmail({ member: mem, team });
+                                        setShowSmtpQuickConfigModal(true);
+                                      }}
+                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-mono bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500/25 transition-colors cursor-pointer"
+                                      title="Click to configure SMTP credentials and dispatch email"
+                                    >
+                                      <AlertTriangle className="w-2.5 h-2.5 text-amber-400" />
+                                      <span>SMTP Setup Required</span>
+                                    </button>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-mono bg-slate-800 text-slate-400 border border-white/10">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
+                                      Not Dispatched
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="py-2.5 px-3 text-right">
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    {!isCorpAdmin && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handlePromoteMemberToAdmin(mem, team)}
+                                        className="px-2 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-[11px] font-mono flex items-center gap-1 transition-all cursor-pointer"
+                                        title={`Promote ${mem.name} to Corporate Administrator for ${selectedCompany.name}`}
+                                      >
+                                        <Crown className="w-3 h-3 text-amber-400" />
+                                        <span>Promote</span>
+                                      </button>
+                                    )}
+
+                                    <button
+                                      type="button"
+                                      disabled={isDispatchingThis}
+                                      onClick={() => handleSendMemberInviteEmail(mem, team)}
+                                      className="px-2.5 py-1 rounded-lg bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 text-[11px] font-mono flex items-center gap-1 transition-all cursor-pointer disabled:opacity-50"
+                                      title={`Dispatch live invitation email to ${mem.email}`}
+                                    >
+                                      {isDispatchingThis ? (
+                                        <>
+                                          <RefreshCw className="w-3 h-3 animate-spin text-purple-400" />
+                                          <span>Sending...</span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Send className="w-3 h-3 text-purple-400" />
+                                          <span>{mem.emailStatus === 'sent' ? 'Resend' : 'Send Invite'}</span>
+                                        </>
+                                      )}
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setConfirmDialog({
+                                          isOpen: true,
+                                          title: 'Remove Team Member',
+                                          description: `Are you sure you want to remove member ${mem.name} (${mem.email}) from ${team.name}?`,
+                                          confirmText: 'Remove Member',
+                                          onConfirm: async () => {
+                                            const updatedTeam = {
+                                              ...team,
+                                              members: team.members.filter((m: any) => m.id !== mem.id),
+                                              updatedAt: new Date().toISOString(),
+                                            };
+                                            setTeams(teams.map(t => t.id === team.id ? updatedTeam : t));
+                                            await saveTeamToFirestore(updatedTeam);
+                                            setNotice({ type: 'info', text: `Removed ${mem.name} from ${team.name}.` });
+                                          }
+                                        });
+                                      }}
+                                      className="p-1 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded transition-colors"
+                                      title="Remove Member"
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ========================================================================= */}
+        {/* SUB-VIEW 2: BULK CSV EMPLOYEE SEEDING SUITE                              */}
+        {/* ========================================================================= */}
+        {activeSectionTab === 'bulk_seeding' && (
+          <div className="space-y-5 pt-1 animate-fadeIn">
+            <div className="p-5 rounded-2xl bg-gradient-to-r from-purple-950/30 via-slate-900 to-indigo-950/30 border border-purple-500/30 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-white/10">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-purple-500/20 border border-purple-400/40 flex items-center justify-center text-purple-300">
+                    <FileSpreadsheet className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-white">
+                      Bulk Employee Seeding & Role / Quota Provisioning
+                    </h4>
+                    <p className="text-xs text-slate-400">
+                      Upload or paste your company roster to batch-create engineers, assign departmental teams, set monthly token quotas, and dispatch SMTP credentials.
+                    </p>
+                  </div>
                 </div>
 
-                <div className="space-y-1.5">
-                  <label className="text-slate-300 font-medium">Corporate Email Domain *</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. solarastra.in"
-                    value={newCompanyDomain}
-                    onChange={(e) => setNewCompanyDomain(e.target.value)}
-                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white font-mono focus:outline-none focus:border-purple-500"
-                  />
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBulkCsvText(
+`Full Name, Email, Role, Team, Model Tier, Monthly Token Quota, Monthly Budget ($)
+Elena Rostova, elena.dev@${selectedCompany.domain}, Senior AI Developer, AI Core Lab, Frontier Tier 3, 25000000, 1000
+David Kim, david.k@${selectedCompany.domain}, AI / ML Engineer, AI Core Lab, Frontier Tier 3, 20000000, 800
+Sarah Jenkins, s.jenkins@${selectedCompany.domain}, Product Manager (AI), Product Innovation, General Tier 2, 10000000, 500
+Michael Chang, m.chang@${selectedCompany.domain}, Prompt & QA Engineer, Validation Team, Fast Tier 1, 10000000, 400
+Aisha Patel, aisha.p@${selectedCompany.domain}, Staff AI Researcher, Research & Deep Reasoning, Frontier Tier 3, 30000000, 1500`
+                      );
+                      const parsed = parseBulkCsv(
+`Full Name, Email, Role, Team, Model Tier, Monthly Token Quota, Monthly Budget ($)
+Elena Rostova, elena.dev@${selectedCompany.domain}, Senior AI Developer, AI Core Lab, Frontier Tier 3, 25000000, 1000
+David Kim, david.k@${selectedCompany.domain}, AI / ML Engineer, AI Core Lab, Frontier Tier 3, 20000000, 800
+Sarah Jenkins, s.jenkins@${selectedCompany.domain}, Product Manager (AI), Product Innovation, General Tier 2, 10000000, 500
+Michael Chang, m.chang@${selectedCompany.domain}, Prompt & QA Engineer, Validation Team, Fast Tier 1, 10000000, 400
+Aisha Patel, aisha.p@${selectedCompany.domain}, Staff AI Researcher, Research & Deep Reasoning, Frontier Tier 3, 30000000, 1500`
+                      );
+                      setBulkParsedMembers(parsed);
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-mono border border-white/10 transition-all cursor-pointer"
+                  >
+                    Load Sample Roster
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const csvContent = "data:text/csv;charset=utf-8," + encodeURIComponent(bulkCsvText);
+                      const link = document.createElement("a");
+                      link.setAttribute("href", csvContent);
+                      link.setAttribute("download", `${selectedCompany.name.replace(/\s+/g, '_')}_employee_roster_template.csv`);
+                      document.body.appendChild(link);
+                      link.click();
+                      document.body.removeChild(link);
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-mono border border-white/10 transition-all cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Download CSV</span>
+                  </button>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <label className="text-slate-300 font-medium">Industry Vertical</label>
+              {/* Textarea Input & Live Validation Preview */}
+              <div className="space-y-2">
+                <label className="text-xs font-medium text-slate-300 flex items-center justify-between">
+                  <span>Paste CSV Roster Data (Columns: Name, Email, Role, Team, Tier, Monthly Tokens, Monthly Budget USD)</span>
+                  <span className="font-mono text-purple-300 text-[11px]">
+                    {bulkParsedMembers.filter(r => r.status === 'valid').length} Valid Rows Ready
+                  </span>
+                </label>
+                <textarea
+                  rows={6}
+                  value={bulkCsvText}
+                  onChange={(e) => {
+                    setBulkCsvText(e.target.value);
+                    const parsed = parseBulkCsv(e.target.value);
+                    setBulkParsedMembers(parsed);
+                  }}
+                  placeholder="Full Name, Email, Role, Team, Model Tier, Monthly Token Quota, Monthly Budget ($)"
+                  className="w-full bg-slate-950 border border-white/15 rounded-xl p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-purple-500"
+                />
+              </div>
+
+              {/* Options */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                <label className="flex items-center gap-2.5 p-3 rounded-xl bg-slate-950/80 border border-white/10 cursor-pointer">
                   <input
-                    type="text"
-                    placeholder="e.g. CleanTech, Healthcare, FinTech"
-                    value={newCompanyIndustry}
-                    onChange={(e) => setNewCompanyIndustry(e.target.value)}
-                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-purple-500"
+                    type="checkbox"
+                    checked={bulkAutoCreateTeams}
+                    onChange={(e) => setBulkAutoCreateTeams(e.target.checked)}
+                    className="w-4 h-4 accent-purple-600 rounded"
                   />
+                  <div>
+                    <div className="text-xs font-semibold text-white">Auto-Create Missing Teams</div>
+                    <div className="text-[10px] text-slate-400">If a team in the roster doesn't exist yet, automatically provision it.</div>
+                  </div>
+                </label>
+
+                <label className="flex items-center gap-2.5 p-3 rounded-xl bg-slate-950/80 border border-white/10 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={bulkSendSmtpEmails}
+                    onChange={(e) => setBulkSendSmtpEmails(e.target.checked)}
+                    className="w-4 h-4 accent-purple-600 rounded"
+                  />
+                  <div>
+                    <div className="text-xs font-semibold text-white">Dispatch SMTP Welcome Emails</div>
+                    <div className="text-[10px] text-slate-400">Send instant credentials & token allocation notice to each imported user.</div>
+                  </div>
+                </label>
+              </div>
+
+              {/* Parsed Table Preview */}
+              {bulkParsedMembers.length > 0 && (
+                <div className="space-y-2 pt-3 border-t border-white/10">
+                  <div className="flex items-center justify-between">
+                    <h5 className="text-xs font-bold text-white uppercase font-mono tracking-wider">
+                      Parsed Employee Seeding Roster ({bulkParsedMembers.length} Entries)
+                    </h5>
+                    <div className="flex items-center gap-2 text-[11px] font-mono">
+                      <span className="text-emerald-400 font-semibold">
+                        ✓ {bulkParsedMembers.filter(r => r.status === 'valid').length} Valid
+                      </span>
+                      {bulkParsedMembers.some(r => r.status !== 'valid') && (
+                        <span className="text-rose-400 font-semibold">
+                          ⚠ {bulkParsedMembers.filter(r => r.status !== 'valid').length} Invalid
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto border border-white/10 rounded-xl max-h-60 overflow-y-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-slate-950 text-slate-400 font-mono text-[10px] uppercase sticky top-0 border-b border-white/10">
+                        <tr>
+                          <th className="py-2 px-3">Status</th>
+                          <th className="py-2 px-3">Employee Name</th>
+                          <th className="py-2 px-3">Email Address</th>
+                          <th className="py-2 px-3">Role</th>
+                          <th className="py-2 px-3">Assigned Team</th>
+                          <th className="py-2 px-3">Tier Cap</th>
+                          <th className="py-2 px-3">Monthly Token Quota</th>
+                          <th className="py-2 px-3">Budget</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/5">
+                        {bulkParsedMembers.map((row) => (
+                          <tr key={row.id} className="hover:bg-white/[0.02]">
+                            <td className="py-2 px-3">
+                              {row.status === 'valid' ? (
+                                <span className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                                  Valid
+                                </span>
+                              ) : (
+                                <span className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-rose-500/20 text-rose-300 border border-rose-500/30" title={row.errorMessage}>
+                                  {row.errorMessage || 'Error'}
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-2 px-3 font-medium text-slate-200">{row.name}</td>
+                            <td className="py-2 px-3 font-mono text-purple-300">{row.email}</td>
+                            <td className="py-2 px-3 text-slate-300">{row.role}</td>
+                            <td className="py-2 px-3 font-medium text-indigo-300">{row.teamName}</td>
+                            <td className="py-2 px-3 font-mono text-slate-400">{row.tierCap}</td>
+                            <td className="py-2 px-3 font-mono text-slate-200">
+                              {(row.monthlyTokenQuota / 1_000_000).toFixed(1)}M
+                            </td>
+                            <td className="py-2 px-3 font-mono text-emerald-400">${row.monthlyBudgetUsd}/mo</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="flex items-center justify-end pt-3">
+                    <button
+                      type="button"
+                      disabled={isImportingBulk || bulkParsedMembers.filter(r => r.status === 'valid').length === 0}
+                      onClick={handleExecuteBulkImport}
+                      className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs shadow-lg shadow-purple-600/30 transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      {isImportingBulk ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          <span>Seeding Employees & Provisioning Teams...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Upload className="w-4 h-4" />
+                          <span>Seed {bulkParsedMembers.filter(r => r.status === 'valid').length} Employees Now</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ========================================================================= */}
+        {/* SUB-VIEW 3: ENTERPRISE SSO & DIRECTORY AUTO-PROVISIONING                  */}
+        {/* ========================================================================= */}
+        {activeSectionTab === 'sso_directory' && (
+          <div className="space-y-5 pt-1 animate-fadeIn">
+            <div className="p-5 rounded-2xl bg-gradient-to-r from-indigo-950/30 via-slate-900 to-purple-950/30 border border-indigo-500/30 space-y-5">
+              <div className="flex items-center justify-between pb-3 border-b border-white/10">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-indigo-500/20 border border-indigo-400/40 flex items-center justify-center text-indigo-300">
+                    <Globe className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-white">
+                      Enterprise Single Sign-On (SSO) & Domain Directory Sync
+                    </h4>
+                    <p className="text-xs text-slate-400">
+                      When employees authenticate with Google Workspace or corporate SAML matching the domain, automatically assign them to default teams with configured token quotas.
+                    </p>
+                  </div>
+                </div>
+
+                <span className={`px-2.5 py-1 rounded-full text-[10px] font-mono uppercase font-semibold ${
+                  ssoAutoProvisionEnabled 
+                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' 
+                    : 'bg-slate-800 text-slate-400 border border-white/10'
+                }`}>
+                  {ssoAutoProvisionEnabled ? '● SSO Auto-Provisioning Active' : '○ SSO Provisioning Disabled'}
+                </span>
+              </div>
+
+              {/* SSO Form Controls */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                <div className="space-y-1.5">
+                  <label className="text-slate-300 font-medium">Corporate Email Domain for SSO Matching *</label>
+                  <div className="flex items-center gap-2">
+                    <span className="px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-slate-400 font-mono">@</span>
+                    <input
+                      type="text"
+                      value={ssoDomainInput}
+                      onChange={(e) => setSsoDomainInput(e.target.value)}
+                      placeholder="e.g. testing123.com"
+                      className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white font-mono focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                  <p className="text-[10px] text-slate-400">Any user logging in with an email ending in @{ssoDomainInput || selectedCompany.domain} will be automatically assigned.</p>
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-slate-300 font-medium">Enterprise Tier</label>
+                  <label className="text-slate-300 font-medium">Default Team Assignment</label>
                   <select
-                    value={newCompanyTier}
-                    onChange={(e) => setNewCompanyTier(e.target.value as any)}
-                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-purple-500"
+                    value={ssoDefaultTeamId}
+                    onChange={(e) => setSsoDefaultTeamId(e.target.value)}
+                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500"
                   >
-                    <option value="enterprise">Enterprise Platinum (Unlimited / Multi-Model)</option>
-                    <option value="growth">Growth Scale (Priority Routing)</option>
-                    <option value="startup">Startup Seed (BYOK & Subscriptions)</option>
-                    <option value="gov_defense">Government / Sovereign Defense (Air-Gapped)</option>
+                    {companyTeams.map((team) => (
+                      <option key={team.id} value={team.id}>
+                        {team.name} ({team.tierCap})
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[10px] text-slate-400">Target departmental team new SSO employees will join automatically.</p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-slate-300 font-medium">Default Role</label>
+                  <select
+                    value={ssoDefaultRole}
+                    onChange={(e) => setSsoDefaultRole(e.target.value)}
+                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500"
+                  >
+                    <option value="Senior AI Developer">Senior AI Developer</option>
+                    <option value="AI / ML Engineer">AI / ML Engineer</option>
+                    <option value="Prompt & QA Engineer">Prompt & QA Engineer</option>
+                    <option value="Research Scientist">Research Scientist</option>
+                    <option value="Product Manager (AI)">Product Manager (AI)</option>
                   </select>
                 </div>
-              </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div className="space-y-1.5">
-                  <label className="text-slate-300 font-medium">Primary Billing Email</label>
-                  <input
-                    type="email"
-                    required
-                    placeholder="billing@solarastra.in"
-                    value={newCompanyBillingEmail}
-                    onChange={(e) => setNewCompanyBillingEmail(e.target.value)}
-                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white font-mono focus:outline-none focus:border-purple-500"
-                  />
+                  <label className="text-slate-300 font-medium">Default Model Tier Access Limit</label>
+                  <select
+                    value={ssoDefaultTierCap}
+                    onChange={(e) => setSsoDefaultTierCap(e.target.value)}
+                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500"
+                  >
+                    <option value="Frontier Tier 3">Frontier Tier 3 (Reasoning & Deep Models)</option>
+                    <option value="General Tier 2">General Tier 2 (Standard Production)</option>
+                    <option value="Fast Tier 1">Fast Tier 1 (Economy)</option>
+                  </select>
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-slate-300 font-medium">Monthly Token Quota</label>
+                  <label className="text-slate-300 font-medium">Default Monthly Token Quota</label>
                   <input
                     type="number"
                     min="1000000"
                     step="1000000"
-                    value={newCompanyQuota}
-                    onChange={(e) => setNewCompanyQuota(Number(e.target.value))}
-                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white font-mono focus:outline-none focus:border-purple-500"
+                    value={ssoDefaultMonthlyQuota}
+                    onChange={(e) => setSsoDefaultMonthlyQuota(Number(e.target.value))}
+                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white font-mono focus:outline-none focus:border-indigo-500"
                   />
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-slate-300 font-medium">Monthly Spend Cap (USD)</label>
-                  <input
-                    type="number"
-                    min="100"
-                    step="100"
-                    value={newCompanyBudget}
-                    onChange={(e) => setNewCompanyBudget(Number(e.target.value))}
-                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white font-mono focus:outline-none focus:border-purple-500"
-                  />
-                </div>
-              </div>
-
-              {/* Model Catalog Multi-Select */}
-              <div className="space-y-2 pt-2 border-t border-white/10">
-                <label className="text-slate-300 font-medium flex items-center justify-between">
-                  <span>Allowlisted AI Models for this Tenant ({newCompanyModels.length} Selected)</span>
-                  <span className="text-[10px] text-purple-300 font-mono">SuperAdmin Model Access Policy</span>
-                </label>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto p-2 bg-slate-950 rounded-xl border border-white/5">
-                  {AVAILABLE_MODELS.map((model) => {
-                    const isChecked = newCompanyModels.includes(model.id);
-
-                    return (
-                      <div
-                        key={model.id}
-                        onClick={() => toggleCompanyModel(model.id)}
-                        className={`p-2.5 rounded-lg border flex items-center justify-between cursor-pointer transition-all ${
-                          isChecked
-                            ? 'bg-purple-950/40 border-purple-500/60 text-white'
-                            : 'bg-slate-900/40 border-white/5 text-slate-400 hover:border-white/20'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <div className={`w-4 h-4 rounded border flex items-center justify-center ${
-                            isChecked ? 'bg-purple-600 border-purple-400 text-white' : 'border-slate-600'
-                          }`}>
-                            {isChecked && <Check className="w-3 h-3" />}
-                          </div>
-                          <div>
-                            <div className="font-semibold text-[11px] leading-tight">{model.name}</div>
-                            <div className="text-[9px] text-slate-400 font-mono">{model.tier} • {model.provider}</div>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* SMTP Alert Checkbox */}
-              <div className="flex items-center gap-3 p-3 rounded-xl bg-slate-950 border border-white/10">
-                <input
-                  type="checkbox"
-                  id="smtpAlerts"
-                  checked={newCompanySmtpAlerts}
-                  onChange={(e) => setNewCompanySmtpAlerts(e.target.checked)}
-                  className="w-4 h-4 accent-purple-600 rounded cursor-pointer"
-                />
-                <label htmlFor="smtpAlerts" className="text-slate-300 text-xs cursor-pointer">
-                  <strong>Enable Automated SMTP Alerts</strong>: Dispatch live email notifications on token quota threshold (80%), security credential updates, and onboarding welcomes.
-                </label>
-              </div>
-
-              {/* Initial Corporate Administrator Provisioning Section */}
-              <div className="p-4 rounded-xl bg-slate-950 border border-amber-500/30 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Crown className="w-4 h-4 text-amber-400" />
-                    <span className="text-xs font-bold text-white uppercase tracking-wider">
-                      Initial Corporate Administrator Setup (Optional)
-                    </span>
-                  </div>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={provisionInitialCorpAdmin}
-                      onChange={(e) => setProvisionInitialCorpAdmin(e.target.checked)}
-                      className="w-4 h-4 accent-amber-500 rounded cursor-pointer"
-                    />
-                    <span className="text-xs font-medium text-amber-300">Appoint Admin</span>
-                  </label>
-                </div>
-
-                {provisionInitialCorpAdmin && (
-                  <div className="space-y-3 pt-2 border-t border-white/5 animate-fadeIn">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div className="space-y-1">
-                        <label className="text-slate-300 text-xs font-medium">Corporate Admin Full Name</label>
-                        <input
-                          type="text"
-                          value={newCorpAdminName}
-                          onChange={(e) => setNewCorpAdminName(e.target.value)}
-                          placeholder="e.g. Elena Rostova"
-                          className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-amber-500"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-slate-300 text-xs font-medium">Corporate Admin Work Email *</label>
-                        <input
-                          type="email"
-                          value={newCorpAdminEmail}
-                          onChange={(e) => setNewCorpAdminEmail(e.target.value)}
-                          placeholder="e.g. elena.admin@company.com"
-                          className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-white text-xs font-mono focus:outline-none focus:border-amber-500"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="space-y-1">
-                      <label className="text-slate-300 text-xs font-medium">Position / Title</label>
+                  <label className="text-slate-300 font-medium">Auto-Provisioning State</label>
+                  <div className="flex items-center gap-3 pt-1">
+                    <label className="flex items-center gap-2 cursor-pointer text-slate-200">
                       <input
-                        type="text"
-                        value={newCorpAdminTitle}
-                        onChange={(e) => setNewCorpAdminTitle(e.target.value)}
-                        placeholder="e.g. VP of AI Engineering & Infrastructure"
-                        className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-amber-500"
+                        type="checkbox"
+                        checked={ssoAutoProvisionEnabled}
+                        onChange={(e) => setSsoAutoProvisionEnabled(e.target.checked)}
+                        className="w-4 h-4 accent-indigo-500 rounded"
                       />
-                    </div>
-
-                    <div className="p-2.5 rounded-lg bg-slate-900/60 border border-white/5">
-                      <div className="text-[10px] text-slate-400 font-mono uppercase mb-1.5 font-semibold">
-                        Delegated Authority for this Corporate Admin:
-                      </div>
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px]">
-                        <label className="flex items-center gap-1.5 cursor-pointer text-slate-300">
-                          <input
-                            type="checkbox"
-                            checked={newCorpAdminPrivileges.canCreateTeams}
-                            onChange={(e) => setNewCorpAdminPrivileges({ ...newCorpAdminPrivileges, canCreateTeams: e.target.checked })}
-                            className="w-3.5 h-3.5 accent-purple-500 rounded"
-                          />
-                          <span>Create Teams</span>
-                        </label>
-                        <label className="flex items-center gap-1.5 cursor-pointer text-slate-300">
-                          <input
-                            type="checkbox"
-                            checked={newCorpAdminPrivileges.canManageBYOK}
-                            onChange={(e) => setNewCorpAdminPrivileges({ ...newCorpAdminPrivileges, canManageBYOK: e.target.checked })}
-                            className="w-3.5 h-3.5 accent-purple-500 rounded"
-                          />
-                          <span>Enterprise BYOK</span>
-                        </label>
-                        <label className="flex items-center gap-1.5 cursor-pointer text-slate-300">
-                          <input
-                            type="checkbox"
-                            checked={newCorpAdminPrivileges.canManageBudgets}
-                            onChange={(e) => setNewCorpAdminPrivileges({ ...newCorpAdminPrivileges, canManageBudgets: e.target.checked })}
-                            className="w-3.5 h-3.5 accent-purple-500 rounded"
-                          />
-                          <span>Budgets & Caps</span>
-                        </label>
-                        <label className="flex items-center gap-1.5 cursor-pointer text-slate-300">
-                          <input
-                            type="checkbox"
-                            checked={newCorpAdminPrivileges.canInviteMembers}
-                            onChange={(e) => setNewCorpAdminPrivileges({ ...newCorpAdminPrivileges, canInviteMembers: e.target.checked })}
-                            className="w-3.5 h-3.5 accent-purple-500 rounded"
-                          />
-                          <span>Invite Engineers</span>
-                        </label>
-                        <label className="flex items-center gap-1.5 cursor-pointer text-slate-300">
-                          <input
-                            type="checkbox"
-                            checked={newCorpAdminPrivileges.canConfigureRouting}
-                            onChange={(e) => setNewCorpAdminPrivileges({ ...newCorpAdminPrivileges, canConfigureRouting: e.target.checked })}
-                            className="w-3.5 h-3.5 accent-purple-500 rounded"
-                          />
-                          <span>Model Routing</span>
-                        </label>
-                        <label className="flex items-center gap-1.5 cursor-pointer text-slate-300">
-                          <input
-                            type="checkbox"
-                            checked={newCorpAdminPrivileges.canViewTelemetry}
-                            onChange={(e) => setNewCorpAdminPrivileges({ ...newCorpAdminPrivileges, canViewTelemetry: e.target.checked })}
-                            className="w-3.5 h-3.5 accent-purple-500 rounded"
-                          />
-                          <span>Live Telemetry</span>
-                        </label>
-                      </div>
-                    </div>
+                      <span>Enable Just-In-Time (JIT) Auto-Provisioning</span>
+                    </label>
                   </div>
-                )}
+                </div>
               </div>
 
               <div className="flex items-center justify-end gap-3 pt-3 border-t border-white/10">
                 <button
                   type="button"
-                  onClick={() => setShowOnboardCompanyModal(false)}
-                  className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 hover:bg-slate-700 transition-colors"
+                  disabled={isSavingSso}
+                  onClick={handleSaveSsoSettings}
+                  className="flex items-center gap-2 px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs shadow-lg shadow-indigo-600/30 transition-all cursor-pointer disabled:opacity-50"
                 >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmittingCompany}
-                  className="flex items-center gap-2 px-5 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold shadow-lg shadow-purple-600/30 transition-all cursor-pointer disabled:opacity-50"
-                >
-                  {isSubmittingCompany ? (
+                  {isSavingSso ? (
                     <>
-                      <RefreshCw className="w-4 h-4 animate-spin text-white" />
-                      <span>Provisioning...</span>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Saving SSO Settings...</span>
                     </>
                   ) : (
-                    <span>Save & Provision to Firestore</span>
+                    <>
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Save SSO Settings</span>
+                    </>
                   )}
                 </button>
               </div>
-            </form>
+
+              {/* SSO Testing Simulator Sandbox */}
+              <div className="p-4 rounded-xl bg-slate-950 border border-white/10 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-purple-400" />
+                  <h5 className="text-xs font-bold text-white uppercase font-mono tracking-wider">
+                    SSO Directory Match Simulator
+                  </h5>
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  Simulate an employee login to test whether their corporate email address properly matches this tenant and check the exact role and token quota that will be provisioned.
+                </p>
+
+                <div className="flex flex-col sm:flex-row items-center gap-2.5">
+                  <input
+                    type="email"
+                    value={ssoTestEmail}
+                    onChange={(e) => setSsoTestEmail(e.target.value)}
+                    placeholder={`e.g. engineer1@${ssoDomainInput || selectedCompany.domain}`}
+                    className="w-full sm:flex-1 bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:border-purple-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleTestSsoMatch(ssoTestEmail)}
+                    className="w-full sm:w-auto px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-mono font-semibold transition-all cursor-pointer whitespace-nowrap"
+                  >
+                    Test SSO Match
+                  </button>
+                </div>
+
+                {ssoTestOutput && (
+                  <div className={`p-3.5 rounded-xl border text-xs font-mono space-y-1.5 ${
+                    ssoTestOutput.match 
+                      ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-200' 
+                      : 'bg-rose-950/40 border-rose-500/40 text-rose-200'
+                  }`}>
+                    {ssoTestOutput.match ? (
+                      <div>
+                        <div className="font-bold flex items-center gap-1.5 text-emerald-300">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                          <span>SSO Match Succeeded — JIT Provisioning Approved</span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2 pt-2 border-t border-emerald-500/20 text-[11px] text-slate-300">
+                          <div>Company: <strong className="text-white">{ssoTestOutput.details.company}</strong></div>
+                          <div>Target Team: <strong className="text-indigo-300">{ssoTestOutput.details.teamName}</strong></div>
+                          <div>Role Granted: <strong className="text-white">{ssoTestOutput.details.role}</strong></div>
+                          <div>Tier Cap: <strong className="text-purple-300">{ssoTestOutput.details.tierCap}</strong></div>
+                          <div>Monthly Quota: <strong className="text-emerald-300">{ssoTestOutput.details.quota}</strong></div>
+                          <div>Routing Policy: <strong className="text-cyan-300">Subscription-First ($0.00 markup)</strong></div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-start gap-2">
+                        <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                        <div>
+                          <div className="font-bold text-rose-300">SSO Match Rejected</div>
+                          <p className="text-[11px] text-rose-200/90 mt-0.5">{ssoTestOutput.details.reason}</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ==================== CREATE COMPANY WIZARD (MULTI-STEP GOVERNANCE FLOW) ==================== */}
+      {showOnboardCompanyModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-md animate-fadeIn">
+          <div className="bg-slate-900 border border-purple-500/30 rounded-2xl w-full max-w-2xl max-h-[92vh] overflow-y-auto p-5 sm:p-6 shadow-2xl shadow-purple-950/40 space-y-5">
+            
+            {/* Wizard Header */}
+            <div className="flex items-start justify-between pb-4 border-b border-white/10">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-600/30 to-indigo-600/30 border border-purple-400/50 flex items-center justify-center text-purple-300 shadow-inner">
+                  <Building2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-bold text-white">
+                      Company Onboarding Wizard
+                    </h3>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-purple-500/20 text-purple-200 border border-purple-500/30">
+                      Step {companyWizardStep} of 5
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400">
+                    Step-by-step corporate tenant onboarding with mandatory Company Admin governance
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setShowOnboardCompanyModal(false);
+                  setWizardCompletedCompany(null);
+                }}
+                className="text-slate-400 hover:text-white text-lg font-bold p-1 rounded-lg hover:bg-white/5 transition-colors"
+                title="Close Wizard"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Stepper Navigation Bar (5 Steps) */}
+            <div className="grid grid-cols-5 gap-1 p-1.5 bg-slate-950/80 rounded-xl border border-white/10 text-xs">
+              <button
+                type="button"
+                onClick={() => setCompanyWizardStep(1)}
+                className={`py-2 px-1 rounded-lg text-center font-medium transition-all flex flex-col items-center justify-center gap-1 ${
+                  companyWizardStep === 1
+                    ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30 font-semibold'
+                    : isWizardStep1Valid
+                    ? 'bg-slate-900 text-purple-300 hover:bg-slate-800'
+                    : 'text-slate-400 hover:bg-slate-900/50'
+                }`}
+              >
+                <span className="w-4 h-4 rounded-full flex items-center justify-center text-[10px] bg-black/30">
+                  {isWizardStep1Valid && companyWizardStep > 1 ? '✓' : '1'}
+                </span>
+                <span className="truncate text-[10px] sm:text-xs">Company Name</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (isWizardStep1Valid) {
+                    setCompanyWizardStep(2);
+                  } else {
+                    setCompanyWizardStep(1);
+                  }
+                }}
+                className={`py-2 px-1 rounded-lg text-center font-medium transition-all flex flex-col items-center justify-center gap-1 ${
+                  companyWizardStep === 2
+                    ? 'bg-amber-600 text-white shadow-md shadow-amber-600/30 font-semibold'
+                    : isWizardStep2Valid
+                    ? 'bg-slate-900 text-amber-300 hover:bg-slate-800'
+                    : 'text-slate-400 hover:bg-slate-900/50'
+                }`}
+              >
+                <span className="w-4 h-4 rounded-full flex items-center justify-center text-[10px] bg-black/30">
+                  {isWizardStep2Valid && companyWizardStep > 2 ? '✓' : '2'}
+                </span>
+                <span className="truncate text-[10px] sm:text-xs flex items-center gap-0.5">
+                  <span>Admin Email</span>
+                  <Crown className="w-2.5 h-2.5 text-amber-300 shrink-0" />
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (!isWizardStep1Valid) {
+                    setCompanyWizardStep(1);
+                  } else if (!isWizardStep2Valid) {
+                    setCompanyWizardStep(2);
+                    setHasAttemptedAdminStep(true);
+                    setAdminStepError('Company Administrator with a valid email is required before configuring budgets & models.');
+                  } else {
+                    setCompanyWizardStep(3);
+                  }
+                }}
+                className={`py-2 px-1 rounded-lg text-center font-medium transition-all flex flex-col items-center justify-center gap-1 ${
+                  companyWizardStep === 3
+                    ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30 font-semibold'
+                    : isWizardStep3Valid
+                    ? 'bg-slate-900 text-purple-300 hover:bg-slate-800'
+                    : 'text-slate-400 hover:bg-slate-900/50'
+                }`}
+              >
+                <span className="w-4 h-4 rounded-full flex items-center justify-center text-[10px] bg-black/30">
+                  {isWizardStep3Valid && companyWizardStep > 3 ? '✓' : '3'}
+                </span>
+                <span className="truncate text-[10px] sm:text-xs">Budgets & Models</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (!isWizardStep1Valid) {
+                    setCompanyWizardStep(1);
+                  } else if (!isWizardStep2Valid) {
+                    setCompanyWizardStep(2);
+                    setHasAttemptedAdminStep(true);
+                  } else {
+                    setCompanyWizardStep(4);
+                  }
+                }}
+                className={`py-2 px-1 rounded-lg text-center font-medium transition-all flex flex-col items-center justify-center gap-1 ${
+                  companyWizardStep === 4
+                    ? 'bg-cyan-600 text-white shadow-md shadow-cyan-600/30 font-semibold'
+                    : 'bg-slate-900 text-cyan-300 hover:bg-slate-800'
+                }`}
+              >
+                <span className="w-4 h-4 rounded-full flex items-center justify-center text-[10px] bg-black/30">
+                  {companyWizardStep > 4 ? '✓' : '4'}
+                </span>
+                <span className="truncate text-[10px] sm:text-xs flex items-center gap-0.5">
+                  <span>Setup Email</span>
+                  <Mail className="w-2.5 h-2.5 text-cyan-300 shrink-0" />
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (!isWizardStep1Valid) {
+                    setCompanyWizardStep(1);
+                  } else if (!isWizardStep2Valid) {
+                    setCompanyWizardStep(2);
+                    setHasAttemptedAdminStep(true);
+                    setAdminStepError('Company Administrator with a valid email is required before Setup Confirmation.');
+                  } else {
+                    setCompanyWizardStep(5);
+                  }
+                }}
+                className={`py-2 px-1 rounded-lg text-center font-medium transition-all flex flex-col items-center justify-center gap-1 ${
+                  companyWizardStep === 5
+                    ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 font-semibold'
+                    : 'text-slate-400 hover:bg-slate-900/50'
+                }`}
+              >
+                <span className="w-4 h-4 rounded-full flex items-center justify-center text-[10px] bg-black/30">
+                  {wizardCompletedCompany ? '✓' : '5'}
+                </span>
+                <span className="truncate text-[10px] sm:text-xs">Confirm Setup</span>
+              </button>
+            </div>
+
+            {/* Wizard Progress Bar */}
+            <div className="w-full bg-slate-950 h-1.5 rounded-full overflow-hidden border border-white/5">
+              <div 
+                className="h-full bg-gradient-to-r from-purple-500 via-amber-400 via-cyan-400 to-emerald-400 transition-all duration-300"
+                style={{ width: `${(companyWizardStep / 5) * 100}%` }}
+              />
+            </div>
+
+            {/* ================= STEP 1: TENANT PROFILE ================= */}
+            {companyWizardStep === 1 && (
+              <div className="space-y-4 text-xs animate-fadeIn">
+                <div className="p-3 bg-purple-950/30 border border-purple-500/20 rounded-xl flex items-start gap-2.5">
+                  <Info className="w-4 h-4 text-purple-400 shrink-0 mt-0.5" />
+                  <p className="text-[11px] text-purple-200/90 leading-relaxed">
+                    Enter the legal organization identity and corporate email domain. The domain will be used for automated directory SSO matching and security policy routing.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-slate-300 font-medium flex items-center justify-between">
+                      <span>Company Legal Name *</span>
+                      {newCompanyName.trim().length >= 2 && <span className="text-emerald-400 text-[10px]">✓ Valid</span>}
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. SolarAstra Energy Systems"
+                      value={newCompanyName}
+                      onChange={(e) => {
+                        setNewCompanyName(e.target.value);
+                        // Auto-suggest domain if empty
+                        if (!newCompanyDomain && e.target.value.length > 2) {
+                          const suggested = e.target.value.toLowerCase().replace(/[^a-z0-9]/g, '') + '.com';
+                          setNewCompanyDomain(suggested);
+                        }
+                      }}
+                      className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2.5 text-white font-sans focus:outline-none focus:border-purple-500 transition-colors"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-slate-300 font-medium flex items-center justify-between">
+                      <span>Corporate Email Domain *</span>
+                      {newCompanyDomain.trim().length >= 2 && <span className="text-emerald-400 text-[10px]">✓ Valid</span>}
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. solarastra.in"
+                      value={newCompanyDomain}
+                      onChange={(e) => setNewCompanyDomain(e.target.value.toLowerCase().trim())}
+                      className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2.5 text-white font-mono focus:outline-none focus:border-purple-500 transition-colors"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-slate-300 font-medium">Industry Vertical</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. CleanTech, Healthcare, FinTech"
+                      value={newCompanyIndustry}
+                      onChange={(e) => setNewCompanyIndustry(e.target.value)}
+                      className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2.5 text-white focus:outline-none focus:border-purple-500 transition-colors"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-slate-300 font-medium">Enterprise Tier</label>
+                    <select
+                      value={newCompanyTier}
+                      onChange={(e) => setNewCompanyTier(e.target.value as any)}
+                      className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2.5 text-white focus:outline-none focus:border-purple-500 transition-colors"
+                    >
+                      <option value="enterprise">Enterprise Platinum (Unlimited / Multi-Model)</option>
+                      <option value="growth">Growth Scale (Priority Routing)</option>
+                      <option value="startup">Startup Seed (BYOK & Subscriptions)</option>
+                      <option value="gov_defense">Government / Sovereign Defense (Air-Gapped)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-slate-300 font-medium flex items-center justify-between">
+                    <span>Primary Billing Email</span>
+                    {newCompanyBillingEmail && isValidEmail(newCompanyBillingEmail) && (
+                      <span className="text-emerald-400 text-[10px]">✓ Valid Format</span>
+                    )}
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    placeholder="billing@solarastra.in"
+                    value={newCompanyBillingEmail}
+                    onChange={(e) => setNewCompanyBillingEmail(e.target.value.trim())}
+                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2.5 text-white font-mono focus:outline-none focus:border-purple-500 transition-colors"
+                  />
+                </div>
+
+                {/* Step 1 Footer Navigation */}
+                <div className="flex items-center justify-between pt-4 border-t border-white/10">
+                  <button
+                    type="button"
+                    onClick={() => setShowOnboardCompanyModal(false)}
+                    className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 hover:bg-slate-700 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!isWizardStep1Valid}
+                    onClick={() => {
+                      if (isWizardStep1Valid) {
+                        setCompanyWizardStep(2);
+                      }
+                    }}
+                    className={`flex items-center gap-2 px-5 py-2 rounded-xl text-white font-semibold transition-all cursor-pointer ${
+                      isWizardStep1Valid
+                        ? 'bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 shadow-lg shadow-purple-600/30'
+                        : 'bg-slate-800 text-slate-500 cursor-not-allowed opacity-50'
+                    }`}
+                  >
+                    <span>Next: Designated Company Admin</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* ================= STEP 2: DESIGNATED COMPANY ADMINISTRATOR (CRITICAL GOVERNANCE) ================= */}
+            {companyWizardStep === 2 && (
+              <div className="space-y-4 text-xs animate-fadeIn">
+                
+                {/* Mandatory Governance Requirement Banner */}
+                <div className="p-3.5 rounded-xl bg-amber-950/40 border border-amber-500/50 space-y-2 shadow-lg shadow-amber-950/30">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1 rounded-lg bg-amber-500/20 text-amber-300">
+                        <Crown className="w-4 h-4" />
+                      </div>
+                      <span className="text-xs font-bold text-amber-200 uppercase tracking-wider">
+                        Designate Company Administrator (Mandatory Policy)
+                      </span>
+                    </div>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-amber-500/20 text-amber-300 border border-amber-400/40 font-semibold">
+                      Required for Tenant Creation
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-amber-100/90 leading-relaxed">
+                    SuperAdmin is required to provide a designated <strong>Company Admin</strong> account during initial setup. Once provisioned, this admin will have delegated authority to seed employees via SSO/CSV, configure department teams, and manage key limits. Tenant creation will fail without a valid linked administrator.
+                  </p>
+                </div>
+
+                {/* Validation Status Indicator */}
+                {(() => {
+                  const cleanAdminEmail = newCorpAdminEmail.trim().toLowerCase();
+                  const cleanAdminName = newCorpAdminName.trim();
+                  const emailValid = isValidEmail(cleanAdminEmail);
+                  const isDomainMatch = cleanAdminEmail.endsWith(`@${newCompanyDomain.trim().toLowerCase()}`);
+
+                  if (!cleanAdminEmail || !emailValid || !cleanAdminName) {
+                    return (
+                      <div className="p-3 rounded-xl bg-rose-950/40 border border-rose-500/50 flex items-start gap-2.5 text-rose-200">
+                        <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                        <div>
+                          <div className="font-bold text-rose-300 text-xs">Company Admin Account Incomplete</div>
+                          <div className="text-[11px] text-rose-200/90 mt-0.5">
+                            {!cleanAdminName && <span>• Admin Full Name is required.<br /></span>}
+                            {!cleanAdminEmail && <span>• Admin Work Email is required.<br /></span>}
+                            {cleanAdminEmail && !emailValid && <span>• Admin Work Email must be a valid email format (e.g. admin@domain.com).<br /></span>}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="p-3 rounded-xl bg-emerald-950/40 border border-emerald-500/50 flex items-start gap-2.5 text-emerald-200">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                      <div className="space-y-0.5">
+                        <div className="font-bold text-emerald-300 text-xs flex items-center gap-2">
+                          <span>Verified Company Admin Linked</span>
+                          <span className="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-mono text-[9px]">
+                            {isDomainMatch ? 'Corporate Domain Match' : 'Managed Domain'}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-emerald-200/90 font-mono">
+                          {cleanAdminName} &lt;{cleanAdminEmail}&gt;
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Form Inputs for Designated Admin */}
+                <div className="space-y-3 p-3.5 bg-slate-950 rounded-xl border border-white/10">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <label className="text-slate-200 text-xs font-medium flex items-center justify-between">
+                        <span>Corporate Admin Full Name *</span>
+                        {newCorpAdminName.trim().length >= 2 && <span className="text-emerald-400 text-[10px]">✓</span>}
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={newCorpAdminName}
+                        onChange={(e) => {
+                          setNewCorpAdminName(e.target.value);
+                          setAdminStepError(null);
+                        }}
+                        placeholder="e.g. Elena Rostova"
+                        className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-amber-400 transition-colors"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-slate-200 text-xs font-medium flex items-center justify-between">
+                        <span>Corporate Admin Work Email *</span>
+                        {newCorpAdminEmail && isValidEmail(newCorpAdminEmail) && (
+                          <span className="text-emerald-400 text-[10px]">✓ Valid</span>
+                        )}
+                      </label>
+                      <input
+                        type="email"
+                        required
+                        value={newCorpAdminEmail}
+                        onChange={(e) => {
+                          setNewCorpAdminEmail(e.target.value.trim());
+                          setAdminStepError(null);
+                        }}
+                        placeholder={`e.g. admin@${newCompanyDomain || 'company.com'}`}
+                        className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-white text-xs font-mono focus:outline-none focus:border-amber-400 transition-colors"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-slate-300 text-xs font-medium">Executive Title / Role</label>
+                    <input
+                      type="text"
+                      value={newCorpAdminTitle}
+                      onChange={(e) => setNewCorpAdminTitle(e.target.value)}
+                      placeholder="e.g. Director of AI Engineering & Infrastructure"
+                      className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-amber-400 transition-colors"
+                    />
+                  </div>
+
+                  {/* Delegated Authority Matrix */}
+                  <div className="pt-2 border-t border-white/10">
+                    <div className="text-[10px] text-slate-400 font-mono uppercase mb-2 font-semibold flex items-center gap-1.5">
+                      <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Delegated Corporate Admin Privileges:</span>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px]">
+                      <label className="flex items-center gap-1.5 cursor-pointer text-slate-300 hover:text-white transition-colors">
+                        <input
+                          type="checkbox"
+                          checked={newCorpAdminPrivileges.canCreateTeams}
+                          onChange={(e) => setNewCorpAdminPrivileges({ ...newCorpAdminPrivileges, canCreateTeams: e.target.checked })}
+                          className="w-3.5 h-3.5 accent-amber-500 rounded cursor-pointer"
+                        />
+                        <span>Create Teams</span>
+                      </label>
+                      <label className="flex items-center gap-1.5 cursor-pointer text-slate-300 hover:text-white transition-colors">
+                        <input
+                          type="checkbox"
+                          checked={newCorpAdminPrivileges.canManageBYOK}
+                          onChange={(e) => setNewCorpAdminPrivileges({ ...newCorpAdminPrivileges, canManageBYOK: e.target.checked })}
+                          className="w-3.5 h-3.5 accent-amber-500 rounded cursor-pointer"
+                        />
+                        <span>Enterprise BYOK</span>
+                      </label>
+                      <label className="flex items-center gap-1.5 cursor-pointer text-slate-300 hover:text-white transition-colors">
+                        <input
+                          type="checkbox"
+                          checked={newCorpAdminPrivileges.canManageBudgets}
+                          onChange={(e) => setNewCorpAdminPrivileges({ ...newCorpAdminPrivileges, canManageBudgets: e.target.checked })}
+                          className="w-3.5 h-3.5 accent-amber-500 rounded cursor-pointer"
+                        />
+                        <span>Budgets & Caps</span>
+                      </label>
+                      <label className="flex items-center gap-1.5 cursor-pointer text-slate-300 hover:text-white transition-colors">
+                        <input
+                          type="checkbox"
+                          checked={newCorpAdminPrivileges.canInviteMembers}
+                          onChange={(e) => setNewCorpAdminPrivileges({ ...newCorpAdminPrivileges, canInviteMembers: e.target.checked })}
+                          className="w-3.5 h-3.5 accent-amber-500 rounded cursor-pointer"
+                        />
+                        <span>Invite Members</span>
+                      </label>
+                      <label className="flex items-center gap-1.5 cursor-pointer text-slate-300 hover:text-white transition-colors">
+                        <input
+                          type="checkbox"
+                          checked={newCorpAdminPrivileges.canConfigureRouting}
+                          onChange={(e) => setNewCorpAdminPrivileges({ ...newCorpAdminPrivileges, canConfigureRouting: e.target.checked })}
+                          className="w-3.5 h-3.5 accent-amber-500 rounded cursor-pointer"
+                        />
+                        <span>Model Routing</span>
+                      </label>
+                      <label className="flex items-center gap-1.5 cursor-pointer text-slate-300 hover:text-white transition-colors">
+                        <input
+                          type="checkbox"
+                          checked={newCorpAdminPrivileges.canViewTelemetry}
+                          onChange={(e) => setNewCorpAdminPrivileges({ ...newCorpAdminPrivileges, canViewTelemetry: e.target.checked })}
+                          className="w-3.5 h-3.5 accent-amber-500 rounded cursor-pointer"
+                        />
+                        <span>Live Telemetry</span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Step 2 Footer Navigation */}
+                <div className="flex items-center justify-between pt-4 border-t border-white/10">
+                  <button
+                    type="button"
+                    onClick={() => setCompanyWizardStep(1)}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-800 text-slate-300 hover:bg-slate-700 transition-colors"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                    <span>Back</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (isWizardStep2Valid) {
+                        setCompanyWizardStep(3);
+                        setAdminStepError(null);
+                      } else {
+                        setHasAttemptedAdminStep(true);
+                        setAdminStepError('Enterprise Policy Block: You must provide a valid Company Administrator email and name to proceed.');
+                      }
+                    }}
+                    className={`flex items-center gap-2 px-5 py-2 rounded-xl text-white font-semibold transition-all cursor-pointer ${
+                      isWizardStep2Valid
+                        ? 'bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 shadow-lg shadow-amber-600/30'
+                        : 'bg-rose-900/60 hover:bg-rose-900 text-rose-200 border border-rose-500/40'
+                    }`}
+                  >
+                    {isWizardStep2Valid ? (
+                      <>
+                        <span>Next: AI Quotas & Models</span>
+                        <ArrowRight className="w-4 h-4" />
+                      </>
+                    ) : (
+                      <>
+                        <AlertTriangle className="w-4 h-4 text-rose-300" />
+                        <span>Valid Admin Required to Proceed</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* ================= STEP 3: QUOTAS & MODELS ================= */}
+            {companyWizardStep === 3 && (
+              <div className="space-y-4 text-xs animate-fadeIn">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-slate-300 font-medium flex items-center justify-between">
+                      <span>Monthly Token Quota</span>
+                      <span className="text-purple-300 font-mono">{(newCompanyQuota / 1_000_000).toFixed(0)}M tokens</span>
+                    </label>
+                    <input
+                      type="number"
+                      min="1000000"
+                      step="1000000"
+                      value={newCompanyQuota}
+                      onChange={(e) => setNewCompanyQuota(Number(e.target.value))}
+                      className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2.5 text-white font-mono focus:outline-none focus:border-purple-500"
+                    />
+                    <div className="flex gap-2 pt-1">
+                      {[10_000_000, 50_000_000, 100_000_000, 250_000_000].map((preset) => (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() => setNewCompanyQuota(preset)}
+                          className={`px-2 py-0.5 rounded text-[10px] font-mono border transition-all ${
+                            newCompanyQuota === preset
+                              ? 'bg-purple-600/40 border-purple-400 text-purple-200'
+                              : 'bg-slate-900 border-white/5 text-slate-400 hover:border-white/20'
+                          }`}
+                        >
+                          {preset / 1_000_000}M
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-slate-300 font-medium flex items-center justify-between">
+                      <span>Monthly Spend Cap (USD)</span>
+                      <span className="text-emerald-300 font-mono">${newCompanyBudget.toLocaleString()}</span>
+                    </label>
+                    <input
+                      type="number"
+                      min="100"
+                      step="100"
+                      value={newCompanyBudget}
+                      onChange={(e) => setNewCompanyBudget(Number(e.target.value))}
+                      className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2.5 text-white font-mono focus:outline-none focus:border-purple-500"
+                    />
+                    <div className="flex gap-2 pt-1">
+                      {[500, 1500, 3000, 10000].map((preset) => (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() => setNewCompanyBudget(preset)}
+                          className={`px-2 py-0.5 rounded text-[10px] font-mono border transition-all ${
+                            newCompanyBudget === preset
+                              ? 'bg-emerald-600/40 border-emerald-400 text-emerald-200'
+                              : 'bg-slate-900 border-white/5 text-slate-400 hover:border-white/20'
+                          }`}
+                        >
+                          ${preset}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-slate-300 font-medium">Model Routing Priority Strategy</label>
+                  <select
+                    value={newCompanyRouting}
+                    onChange={(e) => setNewCompanyRouting(e.target.value as any)}
+                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-purple-500"
+                  >
+                    <option value="subscription_first">Subscription-First (Route to flat-rate plans first, zero markup)</option>
+                    <option value="byok_first">Enterprise BYOK Keys First (Direct API credentials)</option>
+                    <option value="balanced">Balanced Cost-Performance Optimization</option>
+                  </select>
+                </div>
+
+                {/* Model Catalog Multi-Select */}
+                <div className="space-y-2 pt-2 border-t border-white/10">
+                  <label className="text-slate-300 font-medium flex items-center justify-between">
+                    <span>Allowlisted AI Models ({newCompanyModels.length} Selected)</span>
+                    <span className="text-[10px] text-purple-300 font-mono">Tenant Model Sandbox</span>
+                  </label>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-44 overflow-y-auto p-2 bg-slate-950 rounded-xl border border-white/5">
+                    {AVAILABLE_MODELS.map((model) => {
+                      const isChecked = newCompanyModels.includes(model.id);
+
+                      return (
+                        <div
+                          key={model.id}
+                          onClick={() => toggleCompanyModel(model.id)}
+                          className={`p-2.5 rounded-lg border flex items-center justify-between cursor-pointer transition-all ${
+                            isChecked
+                              ? 'bg-purple-950/40 border-purple-500/60 text-white'
+                              : 'bg-slate-900/40 border-white/5 text-slate-400 hover:border-white/20'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <div className={`w-4 h-4 rounded border flex items-center justify-center ${
+                              isChecked ? 'bg-purple-600 border-purple-400 text-white' : 'border-slate-600'
+                            }`}>
+                              {isChecked && <Check className="w-3 h-3" />}
+                            </div>
+                            <div>
+                              <div className="font-semibold text-[11px] leading-tight">{model.name}</div>
+                              <div className="text-[9px] text-slate-400 font-mono">{model.tier} • {model.provider}</div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* SMTP Alert Checkbox */}
+                <div className="flex items-center gap-3 p-3 rounded-xl bg-slate-950 border border-white/10">
+                  <input
+                    type="checkbox"
+                    id="smtpAlerts"
+                    checked={newCompanySmtpAlerts}
+                    onChange={(e) => setNewCompanySmtpAlerts(e.target.checked)}
+                    className="w-4 h-4 accent-purple-600 rounded cursor-pointer"
+                  />
+                  <label htmlFor="smtpAlerts" className="text-slate-300 text-xs cursor-pointer">
+                    <strong>Enable Automated SMTP Alerts</strong>: Send automated threshold alerts and welcome notification to the designated Company Admin.
+                  </label>
+                </div>
+
+                {/* Step 3 Footer Navigation */}
+                <div className="flex items-center justify-between pt-4 border-t border-white/10">
+                  <button
+                    type="button"
+                    onClick={() => setCompanyWizardStep(2)}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-800 text-slate-300 hover:bg-slate-700 transition-colors"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                    <span>Back</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={!isWizardStep3Valid}
+                    onClick={() => setCompanyWizardStep(4)}
+                    className={`flex items-center gap-2 px-5 py-2 rounded-xl text-white font-semibold transition-all cursor-pointer ${
+                      isWizardStep3Valid
+                        ? 'bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 shadow-lg shadow-purple-600/30'
+                        : 'bg-slate-800 text-slate-500 cursor-not-allowed opacity-50'
+                    }`}
+                  >
+                    <span>Next: Send Setup Email</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* ================= STEP 4: SEND EMAIL NOTIFICATION TO COMPANY ADMIN ================= */}
+            {companyWizardStep === 4 && (
+              <div className="space-y-4 text-xs animate-fadeIn">
+                <div className="p-3 bg-cyan-950/30 border border-cyan-500/30 rounded-xl flex items-start gap-2.5">
+                  <Mail className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-bold text-cyan-200">Step 4: Send Email Notification with Detailed Setup Steps</div>
+                    <p className="text-[11px] text-cyan-200/90 leading-relaxed mt-0.5">
+                      Preview and dispatch step-by-step onboarding instructions directly to designated Company Administrator (<span className="font-mono text-white">{newCorpAdminEmail}</span>).
+                    </p>
+                  </div>
+                </div>
+
+                {/* Email Recipient & Subject Header Card */}
+                <div className="p-3.5 bg-slate-950 rounded-xl border border-white/10 space-y-2">
+                  <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                    <div className="text-[11px] text-slate-400 font-mono">
+                      To: <span className="text-white font-semibold">{newCorpAdminName}</span> &lt;<span className="text-cyan-300">{newCorpAdminEmail}</span>&gt;
+                    </div>
+                    <span className="px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-mono text-[9px]">
+                      Designated Admin
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-slate-300 font-mono">
+                    <span className="text-slate-400">Subject:</span> 🏢 [WhyOr Enterprise] Setup Instructions: Your {newCompanyName || 'Company'} AI Workspace is Ready
+                  </div>
+                </div>
+
+                {/* Detailed 5-Step Instructions Included in Email Preview */}
+                <div className="p-3.5 bg-slate-950/90 rounded-xl border border-cyan-500/30 space-y-2.5">
+                  <div className="text-[11px] font-bold text-cyan-300 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Included Step-by-Step Company Admin Setup Guide</span>
+                  </div>
+
+                  <div className="space-y-2 text-[11px]">
+                    <div className="p-2.5 rounded-lg bg-slate-900 border border-white/5 flex items-start gap-2.5">
+                      <span className="w-5 h-5 rounded-full bg-cyan-500/20 text-cyan-300 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">1</span>
+                      <div>
+                        <div className="font-semibold text-white">Authenticate via Enterprise Google SSO / Magic Link</div>
+                        <div className="text-slate-400 text-[10px]">Log into the workspace using your designated corporate email ({newCorpAdminEmail}).</div>
+                      </div>
+                    </div>
+
+                    <div className="p-2.5 rounded-lg bg-slate-900 border border-white/5 flex items-start gap-2.5">
+                      <span className="w-5 h-5 rounded-full bg-cyan-500/20 text-cyan-300 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">2</span>
+                      <div>
+                        <div className="font-semibold text-white">Connect Enterprise BYOK API Keys</div>
+                        <div className="text-slate-400 text-[10px]">Add company OpenAI, Anthropic, Gemini, or DeepSeek credentials with zero platform markup.</div>
+                      </div>
+                    </div>
+
+                    <div className="p-2.5 rounded-lg bg-slate-900 border border-white/5 flex items-start gap-2.5">
+                      <span className="w-5 h-5 rounded-full bg-cyan-500/20 text-cyan-300 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">3</span>
+                      <div>
+                        <div className="font-semibold text-white">Initialize Department Workspaces & Teams</div>
+                        <div className="text-slate-400 text-[10px]">Create sub-teams (Engineering, Data Science, Product) with designated Team Leads.</div>
+                      </div>
+                    </div>
+
+                    <div className="p-2.5 rounded-lg bg-slate-900 border border-white/5 flex items-start gap-2.5">
+                      <span className="w-5 h-5 rounded-full bg-cyan-500/20 text-cyan-300 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">4</span>
+                      <div>
+                        <div className="font-semibold text-white">Invite Developers & Assign Quotas</div>
+                        <div className="text-slate-400 text-[10px]">Bulk import team members with model tier caps and individual monthly token allowances.</div>
+                      </div>
+                    </div>
+
+                    <div className="p-2.5 rounded-lg bg-slate-900 border border-white/5 flex items-start gap-2.5">
+                      <span className="w-5 h-5 rounded-full bg-cyan-500/20 text-cyan-300 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">5</span>
+                      <div>
+                        <div className="font-semibold text-white">Configure Autonomous Routing & Guardrails</div>
+                        <div className="text-slate-400 text-[10px]">Enforce monthly token quota ({(newCompanyQuota / 1_000_000).toFixed(0)}M tokens) and ${newCompanyBudget} spend caps.</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Custom Notes from Super Admin */}
+                <div className="space-y-1">
+                  <label className="block text-slate-300 font-medium">Custom Super Admin Onboarding Message</label>
+                  <textarea
+                    rows={2}
+                    value={customSetupInstructions}
+                    onChange={(e) => setCustomSetupInstructions(e.target.value)}
+                    placeholder="Enter custom onboarding notes or SLA terms..."
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-white text-xs focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+
+                {/* Live Email Test Action & Status */}
+                <div className="p-3 bg-slate-950 rounded-xl border border-white/10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="autoDispatchConfirm"
+                      checked={autoDispatchOnConfirm}
+                      onChange={(e) => setAutoDispatchOnConfirm(e.target.checked)}
+                      className="w-4 h-4 accent-cyan-500 rounded cursor-pointer"
+                    />
+                    <label htmlFor="autoDispatchConfirm" className="text-slate-300 text-xs cursor-pointer">
+                      <strong>Auto-send upon final setup confirmation</strong>
+                    </label>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleSendWizardSetupEmail}
+                    disabled={isSendingWizardEmail}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-950 border border-cyan-500/40 text-cyan-300 hover:bg-cyan-900/60 transition-colors text-xs font-semibold shrink-0 cursor-pointer disabled:opacity-50"
+                  >
+                    {isSendingWizardEmail ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>Sending via SMTP...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Send className="w-3.5 h-3.5" />
+                        <span>Send Test Email Now</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {wizardEmailDispatchStatus && (
+                  <div className={`p-2.5 rounded-xl border text-xs flex items-center gap-2 ${
+                    wizardEmailDispatchStatus.sent
+                      ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300'
+                      : 'bg-rose-950/40 border-rose-500/40 text-rose-300'
+                  }`}>
+                    {wizardEmailDispatchStatus.sent ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    ) : (
+                      <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                    )}
+                    <span className="truncate">
+                      {wizardEmailDispatchStatus.message || wizardEmailDispatchStatus.error}
+                      {wizardEmailDispatchStatus.latencyMs && ` (${wizardEmailDispatchStatus.latencyMs}ms)`}
+                    </span>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between pt-4 border-t border-white/10">
+                  <button
+                    type="button"
+                    onClick={() => setCompanyWizardStep(3)}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-800 text-slate-300 hover:bg-slate-700 transition-colors"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                    <span>Back</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setCompanyWizardStep(5)}
+                    className="flex items-center gap-2 px-5 py-2 rounded-xl bg-gradient-to-r from-cyan-600 to-teal-600 hover:from-cyan-500 hover:to-teal-500 text-white font-semibold shadow-lg shadow-cyan-600/30 transition-all cursor-pointer"
+                  >
+                    <span>Next: Confirm Setup</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* ================= STEP 5: CONFIRM SETUP ================= */}
+            {companyWizardStep === 5 && (
+              <div className="space-y-4 text-xs animate-fadeIn">
+                {wizardCompletedCompany ? (
+                  /* Success Confirmation View */
+                  <div className="space-y-4 text-center py-2">
+                    <div className="w-14 h-14 rounded-2xl bg-emerald-500/20 border border-emerald-400/50 flex items-center justify-center text-emerald-300 mx-auto shadow-xl shadow-emerald-500/20">
+                      <CheckCircle className="w-8 h-8" />
+                    </div>
+
+                    <div className="space-y-1">
+                      <h4 className="text-lg font-bold text-white">
+                        Enterprise Company Setup Confirmed!
+                      </h4>
+                      <p className="text-xs text-emerald-300">
+                        {wizardCompletedCompany.name} is fully provisioned in Firestore with designated Company Admin governance.
+                      </p>
+                    </div>
+
+                    {/* Summary Credentials Card */}
+                    <div className="p-4 bg-slate-950 rounded-xl border border-emerald-500/30 text-left space-y-2 text-[11px]">
+                      <div className="grid grid-cols-2 gap-2 pb-2 border-b border-white/10">
+                        <div>
+                          <span className="text-slate-400">Company ID:</span>
+                          <div className="font-mono text-white font-bold">{wizardCompletedCompany.id}</div>
+                        </div>
+                        <div>
+                          <span className="text-slate-400">Domain:</span>
+                          <div className="font-mono text-cyan-300">{wizardCompletedCompany.domain}</div>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 pb-2 border-b border-white/10">
+                        <div>
+                          <span className="text-slate-400">Company Administrator:</span>
+                          <div className="text-amber-300 font-semibold">{wizardCompletedCompany.companyAdmins?.[0]?.name}</div>
+                          <div className="font-mono text-[10px] text-slate-400">{wizardCompletedCompany.companyAdmins?.[0]?.email}</div>
+                        </div>
+                        <div>
+                          <span className="text-slate-400">Allocated Quota:</span>
+                          <div className="text-white font-mono">{(wizardCompletedCompany.monthlyTokenQuota / 1_000_000).toFixed(0)}M tokens / mo</div>
+                          <div className="text-emerald-400 font-mono">${wizardCompletedCompany.monthlyBudgetUsd} / mo cap</div>
+                        </div>
+                      </div>
+
+                      <div className="text-[10px] text-slate-400 flex items-center gap-1.5 pt-1">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Setup email with step-by-step instructions dispatched to {wizardCompletedCompany.companyAdmins?.[0]?.email}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-center gap-3 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowOnboardCompanyModal(false);
+                          setWizardCompletedCompany(null);
+                        }}
+                        className="px-6 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition-all"
+                      >
+                        Done & View Workspace
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowOnboardCompanyModal(false);
+                          setWizardCompletedCompany(null);
+                          setShowAddTeamModal(true);
+                        }}
+                        className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold shadow-lg shadow-emerald-600/30 transition-all"
+                      >
+                        Create Department Team
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  /* Pre-Submission Review & Confirmation Matrix */
+                  <div className="space-y-4 text-xs">
+                    <div className="p-3 bg-emerald-950/30 border border-emerald-500/30 rounded-xl flex items-start gap-2.5">
+                      <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                      <p className="text-[11px] text-emerald-200/90 leading-relaxed">
+                        <strong>Step 5: Confirm Setup & Provision</strong>. Review all tenant parameters below. Clicking <strong>Confirm Setup & Provision</strong> will atomically initialize the tenant in Firestore and dispatch the setup guide to the Company Admin.
+                      </p>
+                    </div>
+
+                    {/* Summary Bento Matrix */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {/* Tenant Profile Card */}
+                      <div className="p-3.5 bg-slate-950 rounded-xl border border-white/10 space-y-2">
+                        <div className="flex items-center gap-2 text-purple-300 font-bold border-b border-white/10 pb-1.5">
+                          <Building2 className="w-4 h-4" />
+                          <span>1. Organization Profile</span>
+                        </div>
+                        <div className="space-y-1 text-[11px]">
+                          <div className="text-white font-bold text-sm">{newCompanyName}</div>
+                          <div className="text-slate-400 font-mono">Domain: <span className="text-white">{newCompanyDomain}</span></div>
+                          <div className="text-slate-400">Industry: <span className="text-white">{newCompanyIndustry}</span></div>
+                          <div className="text-slate-400">Tier: <span className="text-purple-300 capitalize">{newCompanyTier.replace('_', ' ')}</span></div>
+                          <div className="text-slate-400 font-mono">Billing: <span className="text-slate-300">{newCompanyBillingEmail}</span></div>
+                        </div>
+                      </div>
+
+                      {/* Designated Company Admin Card */}
+                      <div className="p-3.5 bg-slate-950 rounded-xl border border-amber-500/40 space-y-2">
+                        <div className="flex items-center justify-between border-b border-white/10 pb-1.5">
+                          <div className="flex items-center gap-2 text-amber-300 font-bold">
+                            <Crown className="w-4 h-4" />
+                            <span>2. Company Admin</span>
+                          </div>
+                          <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-mono text-[9px]">
+                            Linked
+                          </span>
+                        </div>
+                        <div className="space-y-1 text-[11px]">
+                          <div className="text-white font-bold text-sm">{newCorpAdminName}</div>
+                          <div className="text-amber-200/90 font-mono">{newCorpAdminEmail}</div>
+                          <div className="text-slate-400">Title: <span className="text-white">{newCorpAdminTitle}</span></div>
+                          <div className="pt-1 text-[10px] text-slate-400 flex flex-wrap gap-1">
+                            {newCorpAdminPrivileges.canCreateTeams && <span className="px-1 bg-white/5 rounded">Teams</span>}
+                            {newCorpAdminPrivileges.canManageBYOK && <span className="px-1 bg-white/5 rounded">BYOK</span>}
+                            {newCorpAdminPrivileges.canManageBudgets && <span className="px-1 bg-white/5 rounded">Budgets</span>}
+                            {newCorpAdminPrivileges.canInviteMembers && <span className="px-1 bg-white/5 rounded">Invites</span>}
+                            {newCorpAdminPrivileges.canConfigureRouting && <span className="px-1 bg-white/5 rounded">Routing</span>}
+                            {newCorpAdminPrivileges.canViewTelemetry && <span className="px-1 bg-white/5 rounded">Telemetry</span>}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* AI Quotas & Allowlisted Models Summary */}
+                    <div className="p-3.5 bg-slate-950 rounded-xl border border-white/10 space-y-2">
+                      <div className="flex items-center gap-2 text-indigo-300 font-bold border-b border-white/10 pb-1.5">
+                        <Cpu className="w-4 h-4" />
+                        <span>3. AI Resource Quotas & Allowlisted Catalog</span>
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+                        <div>
+                          <div className="text-slate-400 text-[10px]">Monthly Quota</div>
+                          <div className="font-mono font-bold text-white">{(newCompanyQuota / 1_000_000).toFixed(0)}M tokens</div>
+                        </div>
+                        <div>
+                          <div className="text-slate-400 text-[10px]">Monthly Spend Cap</div>
+                          <div className="font-mono font-bold text-emerald-400">${newCompanyBudget}</div>
+                        </div>
+                        <div>
+                          <div className="text-slate-400 text-[10px]">Routing Strategy</div>
+                          <div className="text-indigo-300 capitalize">{newCompanyRouting.replace('_', ' ')}</div>
+                        </div>
+                        <div>
+                          <div className="text-slate-400 text-[10px]">Email Dispatch</div>
+                          <div className="text-cyan-300">
+                            {autoDispatchOnConfirm ? 'Automatic on Confirm' : 'Manual'}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="pt-2 border-t border-white/5 flex flex-wrap gap-1.5">
+                        {newCompanyModels.map(m => (
+                          <span key={m} className="px-2 py-0.5 rounded-md bg-purple-950/40 border border-purple-500/30 text-purple-300 font-mono text-[10px]">
+                            {m}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Final Submission Actions */}
+                    <div className="flex items-center justify-between pt-4 border-t border-white/10">
+                      <button
+                        type="button"
+                        onClick={() => setCompanyWizardStep(4)}
+                        className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-800 text-slate-300 hover:bg-slate-700 transition-colors"
+                      >
+                        <ArrowLeft className="w-4 h-4" />
+                        <span>Back: Email Setup</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleOnboardCompanySubmit()}
+                        disabled={isSubmittingCompany || !isWizardStep1Valid || !isWizardStep2Valid}
+                        className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold shadow-lg shadow-emerald-600/30 transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        {isSubmittingCompany ? (
+                          <>
+                            <RefreshCw className="w-4 h-4 animate-spin text-white" />
+                            <span>Provisioning & Dispatching Setup...</span>
+                          </>
+                        ) : (
+                          <>
+                            <ShieldCheck className="w-4 h-4" />
+                            <span>Confirm Setup & Provision Company</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
           </div>
         </div>
       )}
@@ -2851,6 +4708,235 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== MODAL: ADMIN REQUIRED ENTERPRISE GUARDRAIL ==================== */}
+      {showAdminRequiredGuardrailModal && selectedCompany && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-fadeIn">
+          <div className="bg-slate-900 border-2 border-amber-500/50 rounded-2xl w-full max-w-lg p-6 shadow-2xl space-y-5">
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 rounded-2xl bg-amber-500/20 text-amber-300 border border-amber-400/40 flex items-center justify-center shrink-0">
+                <ShieldAlert className="w-7 h-7" />
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base font-bold text-white">
+                    Company Administrator Required
+                  </h3>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-amber-500/20 text-amber-300 border border-amber-400/40 font-semibold">
+                    Policy Block
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400">
+                  Tenant: <strong className="text-white">{selectedCompany.name}</strong> (@{selectedCompany.domain})
+                </p>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-xl bg-slate-950/80 border border-amber-500/20 text-xs text-slate-300 leading-relaxed space-y-2">
+              <p>
+                <strong className="text-amber-300">Enterprise CUJ Guardrail:</strong> You cannot create teams or invite individual employees for <strong>{selectedCompany.name}</strong> until a <strong>Company Administrator</strong> has been designated.
+              </p>
+              <p className="text-[11px] text-slate-400">
+                SuperAdmin onboards companies and creates their initial Company Admin. That Company Admin then holds delegated authority to seed employees via SSO, bulk CSV upload, or manual invites, as well as configure departmental teams and model budgets.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2 border-t border-white/10">
+              <button
+                type="button"
+                onClick={() => setShowAdminRequiredGuardrailModal(false)}
+                className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 hover:bg-slate-700 text-xs transition-colors cursor-pointer"
+              >
+                Dismiss
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAdminRequiredGuardrailModal(false);
+                  handleOpenCorpAdminModal();
+                }}
+                className="flex items-center gap-2 px-5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-purple-600 hover:from-amber-400 hover:to-purple-500 text-slate-950 font-bold text-xs shadow-lg shadow-amber-500/30 transition-all cursor-pointer"
+              >
+                <Crown className="w-4 h-4" />
+                <span>👑 Appoint Company Admin Now</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== MODAL: BULK CSV SEEDING MODAL DIALOG ==================== */}
+      {showBulkUploadModal && selectedCompany && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-fadeIn">
+          <div className="bg-slate-900 border border-purple-500/30 rounded-2xl w-full max-w-3xl max-h-[92vh] overflow-y-auto p-6 shadow-2xl space-y-5 text-xs">
+            <div className="flex items-center justify-between pb-3 border-b border-white/10">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-purple-500/20 border border-purple-400/40 flex items-center justify-center text-purple-300">
+                  <FileSpreadsheet className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">
+                    Bulk Employee CSV Seeding: {selectedCompany.name}
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Import employee roster, map roles, provision departmental teams, and allocate monthly token quotas
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowBulkUploadModal(false)}
+                className="text-slate-400 hover:text-white text-lg font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-slate-300 font-medium">
+                    CSV Roster Input (Format: Full Name, Email, Role, Team, Model Tier, Monthly Tokens, Monthly Budget)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBulkCsvText(
+`Full Name, Email, Role, Team, Model Tier, Monthly Token Quota, Monthly Budget ($)
+Elena Rostova, elena.dev@${selectedCompany.domain}, Senior AI Developer, AI Core Lab, Frontier Tier 3, 25000000, 1000
+David Kim, david.k@${selectedCompany.domain}, AI / ML Engineer, AI Core Lab, Frontier Tier 3, 20000000, 800
+Sarah Jenkins, s.jenkins@${selectedCompany.domain}, Product Manager (AI), Product Innovation, General Tier 2, 10000000, 500
+Michael Chang, m.chang@${selectedCompany.domain}, Prompt & QA Engineer, Validation Team, Fast Tier 1, 10000000, 400
+Aisha Patel, aisha.p@${selectedCompany.domain}, Staff AI Researcher, Research & Deep Reasoning, Frontier Tier 3, 30000000, 1500`
+                      );
+                      const parsed = parseBulkCsv(
+`Full Name, Email, Role, Team, Model Tier, Monthly Token Quota, Monthly Budget ($)
+Elena Rostova, elena.dev@${selectedCompany.domain}, Senior AI Developer, AI Core Lab, Frontier Tier 3, 25000000, 1000
+David Kim, david.k@${selectedCompany.domain}, AI / ML Engineer, AI Core Lab, Frontier Tier 3, 20000000, 800
+Sarah Jenkins, s.jenkins@${selectedCompany.domain}, Product Manager (AI), Product Innovation, General Tier 2, 10000000, 500
+Michael Chang, m.chang@${selectedCompany.domain}, Prompt & QA Engineer, Validation Team, Fast Tier 1, 10000000, 400
+Aisha Patel, aisha.p@${selectedCompany.domain}, Staff AI Researcher, Research & Deep Reasoning, Frontier Tier 3, 30000000, 1500`
+                      );
+                      setBulkParsedMembers(parsed);
+                    }}
+                    className="text-purple-300 hover:text-purple-200 font-mono text-[11px] underline cursor-pointer"
+                  >
+                    Load Sample Roster
+                  </button>
+                </div>
+                <textarea
+                  rows={6}
+                  value={bulkCsvText}
+                  onChange={(e) => {
+                    setBulkCsvText(e.target.value);
+                    const parsed = parseBulkCsv(e.target.value);
+                    setBulkParsedMembers(parsed);
+                  }}
+                  className="w-full bg-slate-950 border border-white/10 rounded-xl p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-purple-500"
+                  placeholder="Full Name, Email, Role, Team, Model Tier, Monthly Token Quota, Monthly Budget ($)"
+                />
+              </div>
+
+              {/* Toggles */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label className="flex items-center gap-2 p-2.5 rounded-xl bg-slate-950 border border-white/10 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={bulkAutoCreateTeams}
+                    onChange={(e) => setBulkAutoCreateTeams(e.target.checked)}
+                    className="w-4 h-4 accent-purple-600 rounded"
+                  />
+                  <div>
+                    <div className="font-semibold text-white">Auto-Create Missing Teams</div>
+                    <div className="text-[10px] text-slate-400">Creates any team names in CSV that do not exist yet</div>
+                  </div>
+                </label>
+
+                <label className="flex items-center gap-2 p-2.5 rounded-xl bg-slate-950 border border-white/10 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={bulkSendSmtpEmails}
+                    onChange={(e) => setBulkSendSmtpEmails(e.target.checked)}
+                    className="w-4 h-4 accent-purple-600 rounded"
+                  />
+                  <div>
+                    <div className="font-semibold text-white">Dispatch SMTP Welcome Emails</div>
+                    <div className="text-[10px] text-slate-400">Dispatches real credentials notice to each imported engineer</div>
+                  </div>
+                </label>
+              </div>
+
+              {/* Preview Table */}
+              {bulkParsedMembers.length > 0 && (
+                <div className="space-y-2 pt-2 border-t border-white/10">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-mono text-slate-300">
+                      Parsed {bulkParsedMembers.length} Rows • <strong className="text-emerald-400">{bulkParsedMembers.filter(r => r.status === 'valid').length} Valid</strong>
+                    </span>
+                  </div>
+
+                  <div className="max-h-48 overflow-y-auto border border-white/10 rounded-xl">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-slate-950 text-slate-400 font-mono text-[10px] uppercase sticky top-0 border-b border-white/10">
+                        <tr>
+                          <th className="py-2 px-2.5">Name</th>
+                          <th className="py-2 px-2.5">Email</th>
+                          <th className="py-2 px-2.5">Role</th>
+                          <th className="py-2 px-2.5">Team</th>
+                          <th className="py-2 px-2.5">Tier</th>
+                          <th className="py-2 px-2.5">Tokens/Mo</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/5">
+                        {bulkParsedMembers.map((row) => (
+                          <tr key={row.id}>
+                            <td className="py-1.5 px-2.5 text-slate-200 font-medium">{row.name}</td>
+                            <td className="py-1.5 px-2.5 font-mono text-purple-300">{row.email}</td>
+                            <td className="py-1.5 px-2.5 text-slate-400">{row.role}</td>
+                            <td className="py-1.5 px-2.5 text-indigo-300">{row.teamName}</td>
+                            <td className="py-1.5 px-2.5 font-mono text-slate-400">{row.tierCap}</td>
+                            <td className="py-1.5 px-2.5 font-mono text-slate-200">{(row.monthlyTokenQuota / 1_000_000).toFixed(0)}M</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-white/10">
+                <button
+                  type="button"
+                  onClick={() => setShowBulkUploadModal(false)}
+                  className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 hover:bg-slate-700"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={isImportingBulk || bulkParsedMembers.filter(r => r.status === 'valid').length === 0}
+                  onClick={async () => {
+                    await handleExecuteBulkImport();
+                    setShowBulkUploadModal(false);
+                  }}
+                  className="flex items-center gap-2 px-5 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold shadow-lg shadow-purple-600/30 transition-all cursor-pointer disabled:opacity-50"
+                >
+                  {isImportingBulk ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Importing...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>Import & Seed {bulkParsedMembers.filter(r => r.status === 'valid').length} Members</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

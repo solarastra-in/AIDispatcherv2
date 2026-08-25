@@ -21,7 +21,9 @@ import {
   FileSpreadsheet,
   Trash2,
   Edit2,
-  CheckCircle2
+  CheckCircle2,
+  Building2,
+  Crown
 } from 'lucide-react';
 
 interface TeamGovernanceProps {
@@ -30,6 +32,7 @@ interface TeamGovernanceProps {
   onAddMember?: (newMember: TeamMember) => void;
   activePersona: UserPersona;
   onNavigateTab?: (tab: string) => void;
+  onOpenCompanyAdminWizard?: () => void;
 }
 
 export const TeamGovernance: React.FC<TeamGovernanceProps> = ({
@@ -38,6 +41,7 @@ export const TeamGovernance: React.FC<TeamGovernanceProps> = ({
   onAddMember,
   activePersona,
   onNavigateTab,
+  onOpenCompanyAdminWizard,
 }) => {
   const [team, setTeam] = useState<TeamAccount>(initialTeam);
   const [showInviteModal, setShowInviteModal] = useState<boolean>(false);
@@ -355,6 +359,18 @@ export const TeamGovernance: React.FC<TeamGovernanceProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5 font-mono text-xs">
+            {onOpenCompanyAdminWizard && (activePersona.role === 'corporate_admin' || activePersona.role === 'platform_admin' || activePersona.isCompanyAdmin) && (
+              <button
+                id="launch-company-admin-wizard-btn"
+                onClick={onOpenCompanyAdminWizard}
+                className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-purple-600/25 hover:bg-purple-600/40 border border-purple-500/40 text-purple-200 transition-all cursor-pointer backdrop-blur-md font-bold shadow-md shadow-purple-600/20"
+                title="Launch 7-Step Company Admin Onboarding & Configuration Wizard"
+              >
+                <Crown className="w-3.5 h-3.5 text-purple-400" />
+                <span>7-Step Setup Wizard</span>
+              </button>
+            )}
+
             <button
               id="export-team-csv-btn"
               onClick={handleExportTeamCsv}
@@ -392,9 +408,20 @@ export const TeamGovernance: React.FC<TeamGovernanceProps> = ({
       {/* Team Aggregates Card */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 font-mono text-xs">
         <div className="bg-slate-900/50 backdrop-blur-2xl border border-white/[0.08] rounded-2xl p-5 shadow-xl shadow-black/20">
-          <div className="text-[10px] text-slate-400 uppercase tracking-wider">ORGANIZATION WORKSPACE</div>
+          <div className="flex items-center justify-between text-[10px] text-slate-400 uppercase tracking-wider">
+            <span>COMPANY & TEAM</span>
+            {activePersona.companyName && (
+              <span className="flex items-center gap-1 text-purple-400 font-semibold lowercase">
+                <Building2 className="w-3 h-3" />
+                {activePersona.companyName}
+              </span>
+            )}
+          </div>
           <div className="text-xl font-display font-bold text-white mt-1">{team.name}</div>
-          <div className="text-slate-400 text-[11px] mt-1">Tier: <strong className="text-amber-400 uppercase">{team.tierPlan}</strong></div>
+          <div className="text-slate-400 text-[11px] mt-1 flex items-center gap-2">
+            <span>Tier: <strong className="text-amber-400 uppercase">{team.tierPlan}</strong></span>
+            {activePersona.companyName && <span>• <strong className="text-purple-300">{activePersona.companyName}</strong></span>}
+          </div>
         </div>
 
         <div className="bg-slate-900/50 backdrop-blur-2xl border border-white/[0.08] rounded-2xl p-5 shadow-xl shadow-black/20">

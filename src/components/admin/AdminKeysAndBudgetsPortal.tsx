@@ -30,6 +30,7 @@ import {
 import { 
   AdminKeyConfig, 
   loadAdminKeyConfigsFromFirestore, 
+  loadAllCredentialsFromFirestore,
   saveAdminKeyConfigToFirestore,
   recordAuditLogToFirestore,
   saveCredentialToFirestore,
@@ -116,8 +117,33 @@ export const AdminKeysAndBudgetsPortal: React.FC<AdminKeysAndBudgetsPortalProps>
   const fetchKeys = async () => {
     setIsLoading(true);
     try {
-      const cloudKeys = await loadAdminKeyConfigsFromFirestore();
-      setKeys(cloudKeys);
+      const [cloudKeys, firestoreCreds] = await Promise.all([
+        loadAdminKeyConfigsFromFirestore(),
+        loadAllCredentialsFromFirestore().catch(() => ({}))
+      ]);
+      
+      // Cross-synchronize with credentials collection (e.g. Claude/Anthropic, OpenAI subscriptions)
+      const mergedKeys = cloudKeys.map(k => {
+        const prov = k.provider === 'gemini' ? 'google' : k.provider;
+        const cred = firestoreCreds[prov] || firestoreCreds[k.provider];
+        if (cred && (cred.hasSubscription || cred.hasKey || cred.status === 'connected' || cred.subscriptionTier)) {
+          const hasSub = Boolean(cred.hasSubscription || cred.subscriptionTier || cred.sessionTokenMasked);
+          return {
+            ...k,
+            hasSubscription: hasSub,
+            subscriptionTier: cred.subscriptionTier || k.subscriptionTier,
+            subscriptionEmail: cred.subscriptionEmail || k.subscriptionEmail,
+            sessionTokenMasked: cred.sessionTokenMasked || k.sessionTokenMasked,
+            localProxyUrl: cred.localProxyUrl || k.localProxyUrl,
+            isActive: true,
+            status: 'active' as const,
+            lastVerifiedAt: cred.lastVerifiedAt || k.lastVerifiedAt || new Date().toISOString()
+          };
+        }
+        return k;
+      });
+      
+      setKeys(mergedKeys);
     } catch (e) {
       console.warn('Error loading admin keys', e);
     } finally {
@@ -151,10 +177,9 @@ export const AdminKeysAndBudgetsPortal: React.FC<AdminKeysAndBudgetsPortalProps>
         status = 'budget_exceeded';
       } else if (isDayUsageOver) {
         status = 'day_limit_exceeded';
-      } else if (isActive) {
-        status = 'active';
       } else {
-        status = 'unconfigured';
+        status = 'active';
+        isActive = true;
       }
 
       return {

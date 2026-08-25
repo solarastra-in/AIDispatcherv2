@@ -184,11 +184,15 @@ const PROVIDER_METAS: ProviderConfigMeta[] = [
 interface CompanyCredentialsPageProps {
   onNavigateToDispatch?: (prompt?: string, modelId?: string) => void;
   onOpenAuthGate?: () => void;
+  activePersona?: any;
+  onOpenCompanyAdminWizard?: () => void;
 }
 
 export const CompanyCredentialsPage: React.FC<CompanyCredentialsPageProps> = ({
   onNavigateToDispatch,
   onOpenAuthGate,
+  activePersona,
+  onOpenCompanyAdminWizard,
 }) => {
   // Auth state
   const { isAuthenticated, user, isGoogleAuth, isRegistered, signInWithGoogle } = useAuth();
@@ -773,9 +777,27 @@ export const CompanyCredentialsPage: React.FC<CompanyCredentialsPageProps> = ({
         
         <div className="relative z-10 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
           <div className="space-y-2">
-            <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-indigo-950/80 border border-indigo-700/60 text-indigo-300 text-xs font-semibold">
-              <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
-              <span>Enterprise Credentials & Flat-Rate Subscriptions Hub</span>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-indigo-950/80 border border-indigo-700/60 text-indigo-300 text-xs font-semibold">
+                <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Enterprise Credentials & Flat-Rate Subscriptions Hub</span>
+              </div>
+              {activePersona?.companyName && (
+                <div className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-purple-950/80 border border-purple-600/60 text-purple-300 text-xs font-bold">
+                  <Building className="w-3.5 h-3.5 text-purple-400" />
+                  <span>{activePersona.companyName}</span>
+                </div>
+              )}
+              {onOpenCompanyAdminWizard && (
+                <button
+                  id="credentials-open-wizard-btn"
+                  onClick={onOpenCompanyAdminWizard}
+                  className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-purple-600/30 hover:bg-purple-600/50 border border-purple-400/50 text-purple-200 text-xs font-bold transition-all cursor-pointer shadow-sm"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-purple-300" />
+                  <span>7-Step Admin Wizard</span>
+                </button>
+              )}
             </div>
             <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-100 tracking-tight">
               Company Onboarding & Subscription Gateway
