@@ -83,23 +83,23 @@ export const CompanyAdminOnboardingWizard: React.FC<CompanyAdminOnboardingWizard
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
 
   // Target Company State
-  const [companyId, setCompanyId] = useState<string>(activePersona.companyId || 'comp_solarastra');
-  const [companyName, setCompanyName] = useState<string>(activePersona.companyName || 'SolarAstra Energy Systems');
-  const [companyDomain, setCompanyDomain] = useState<string>('solarastra.in');
-  const [companyIndustry, setCompanyIndustry] = useState<string>('CleanTech & Renewable Energy AI');
+  const [companyId, setCompanyId] = useState<string>(activePersona.companyId || '');
+  const [companyName, setCompanyName] = useState<string>(activePersona.companyName || '');
+  const [companyDomain, setCompanyDomain] = useState<string>('');
+  const [companyIndustry, setCompanyIndustry] = useState<string>('');
   const [companyTier, setCompanyTier] = useState<'enterprise' | 'growth' | 'startup' | 'gov_defense'>('enterprise');
 
   // STEP 1: Accept Invitation State
-  const [superAdminEmail, setSuperAdminEmail] = useState<string>('solarastra.in@gmail.com');
-  const [companyAdminName, setCompanyAdminName] = useState<string>(activePersona.name || 'Elena Rostova');
-  const [companyAdminEmail, setCompanyAdminEmail] = useState<string>(activePersona.email || 'elena.admin@solarastra.in');
-  const [companyAdminTitle, setCompanyAdminTitle] = useState<string>(activePersona.title || 'Corporate AI Admin & Infrastructure Director');
-  const [invitationAccepted, setInvitationAccepted] = useState<boolean>(true);
-  const [termsAccepted, setTermsAccepted] = useState<boolean>(true);
+  const [superAdminEmail, setSuperAdminEmail] = useState<string>('');
+  const [companyAdminName, setCompanyAdminName] = useState<string>(activePersona.name || '');
+  const [companyAdminEmail, setCompanyAdminEmail] = useState<string>(activePersona.email || '');
+  const [companyAdminTitle, setCompanyAdminTitle] = useState<string>(activePersona.title || '');
+  const [invitationAccepted, setInvitationAccepted] = useState<boolean>(false);
+  const [termsAccepted, setTermsAccepted] = useState<boolean>(false);
   const [acceptanceSignature, setAcceptanceSignature] = useState<string>('');
 
   // STEP 2: Configure BYOK Keys or Subscriptions State
-  const [byokMode, setByokMode] = useState<'direct_keys' | 'subscription_bridges' | 'hybrid'>('hybrid');
+  const [byokMode, setByokMode] = useState<'direct_keys' | 'subscription_bridges' | 'hybrid'>('direct_keys');
   const [byokKeys, setByokKeys] = useState<Record<string, string>>({
     google: '',
     openai: '',
@@ -110,22 +110,19 @@ export const CompanyAdminOnboardingWizard: React.FC<CompanyAdminOnboardingWizard
   });
   const [showKeySecret, setShowKeySecret] = useState<Record<string, boolean>>({});
   const [keyValidationStatus, setKeyValidationStatus] = useState<Record<string, 'valid' | 'testing' | 'untested' | 'error'>>({
-    google: 'valid',
-    openai: 'valid',
+    google: 'untested',
+    openai: 'untested',
     anthropic: 'untested',
-    deepseek: 'valid',
+    deepseek: 'untested',
     groq: 'untested',
     mistral: 'untested',
   });
-  const [activeSubscriptions, setActiveSubscriptions] = useState<string[]>([
-    'Google One AI Premium / Gemini Advanced ($20/mo Flat)',
-    'ChatGPT Plus / Team Subscription Bridge'
-  ]);
+  const [activeSubscriptions, setActiveSubscriptions] = useState<string[]>([]);
 
   // STEP 3: Confirm Budgets, Models & Quotas (Configured by Super Admin) State
-  const [monthlyTokenQuota, setMonthlyTokenQuota] = useState<number>(100_000_000);
-  const [monthlyBudgetUsd, setMonthlyBudgetUsd] = useState<number>(5000);
-  const [routingPriority, setRoutingPriority] = useState<'subscription_first' | 'byok_first' | 'balanced'>('subscription_first');
+  const [monthlyTokenQuota, setMonthlyTokenQuota] = useState<number>(50_000_000);
+  const [monthlyBudgetUsd, setMonthlyBudgetUsd] = useState<number>(1000);
+  const [routingPriority, setRoutingPriority] = useState<'subscription_first' | 'byok_first' | 'balanced'>('byok_first');
   const [allowedModels, setAllowedModels] = useState<string[]>([
     'gemini-3.7-flash',
     'gemini-3.1-flash-lite',
@@ -137,70 +134,40 @@ export const CompanyAdminOnboardingWizard: React.FC<CompanyAdminOnboardingWizard
     'llama-3.3-70b-versatile'
   ]);
   const [smtpAlertsEnabled, setSmtpAlertsEnabled] = useState<boolean>(true);
-  const [budgetConfirmed, setBudgetConfirmed] = useState<boolean>(true);
+  const [budgetConfirmed, setBudgetConfirmed] = useState<boolean>(false);
 
   // STEP 4: Configure Logo, Contact Us and Support Details State
-  const [companyLogoUrl, setCompanyLogoUrl] = useState<string>('https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=200&auto=format&fit=crop&q=80');
-  const [companyContactEmail, setCompanyContactEmail] = useState<string>('ai-support@solarastra.in');
-  const [companyContactPhone, setCompanyContactPhone] = useState<string>('+1 (800) 555-AI-OPS');
-  const [companyHelpdeskUrl, setCompanyHelpdeskUrl] = useState<string>('https://support.solarastra.in/ai-workspace');
-  const [companySupportSlack, setCompanySupportSlack] = useState<string>('#ai-workspace-support');
-  const [companyEscalationNotes, setCompanyEscalationNotes] = useState<string>(
-    'For individual token quota increases exceeding 20M tokens or requesting frontier deep reasoning tier access, please contact the Internal AI Operations Team via #ai-workspace-support.'
-  );
+  const [companyLogoUrl, setCompanyLogoUrl] = useState<string>('');
+  const [companyContactEmail, setCompanyContactEmail] = useState<string>('');
+  const [companyContactPhone, setCompanyContactPhone] = useState<string>('');
+  const [companyHelpdeskUrl, setCompanyHelpdeskUrl] = useState<string>('');
+  const [companySupportSlack, setCompanySupportSlack] = useState<string>('');
+  const [companyEscalationNotes, setCompanyEscalationNotes] = useState<string>('');
 
   // STEP 5: Onboard Team using SSO or Email Addresses (Batch or Manual) State
-  const [ssoAutoProvisioning, setSsoAutoProvisioning] = useState<boolean>(true);
-  const [ssoDomain, setSsoDomain] = useState<string>('solarastra.in');
+  const [ssoAutoProvisioning, setSsoAutoProvisioning] = useState<boolean>(false);
+  const [ssoDomain, setSsoDomain] = useState<string>('');
   const [manualName, setManualName] = useState<string>('');
   const [manualEmail, setManualEmail] = useState<string>('');
-  const [manualDept, setManualDept] = useState<string>('AI Engineering');
+  const [manualDept, setManualDept] = useState<string>('');
   const [manualRole, setManualRole] = useState<'team_admin' | 'team_member' | 'viewer'>('team_member');
   const [manualTierCap, setManualTierCap] = useState<ModelTier>('high');
   const [manualQuota, setManualQuota] = useState<number>(20_000_000);
   const [batchCsvText, setBatchCsvText] = useState<string>('');
   const [batchImportMode, setBatchImportMode] = useState<boolean>(false);
-  const [onboardedMembers, setOnboardedMembers] = useState<OnboardMemberEntry[]>([
-    {
-      id: 'mem_01',
-      name: 'Sarah Connor',
-      email: 'sarah.connor@solarastra.in',
-      department: 'AI Systems & Infra',
-      role: 'team_admin',
-      tierCap: 'frontier',
-      monthlyTokenQuota: 30_000_000,
-    },
-    {
-      id: 'mem_02',
-      name: 'Devin Vance',
-      email: 'devin.vance@solarastra.in',
-      department: 'Machine Learning',
-      role: 'team_member',
-      tierCap: 'high',
-      monthlyTokenQuota: 20_000_000,
-    },
-    {
-      id: 'mem_03',
-      name: 'Marcus Brody',
-      email: 'marcus.brody@solarastra.in',
-      department: 'Product Intelligence',
-      role: 'team_member',
-      tierCap: 'mid',
-      monthlyTokenQuota: 15_000_000,
-    },
-  ]);
+  const [onboardedMembers, setOnboardedMembers] = useState<OnboardMemberEntry[]>([]);
 
   // STEP 6: Send Email Notification to Company Employees State
-  const [customEmployeeWelcome, setCustomEmployeeWelcome] = useState<string>(
-    `Welcome to the ${companyName || 'Corporate'} AI Workspace! Our enterprise BYOK credentials and intelligent routing are active with zero platform markup. Follow the steps below to authenticate and start dispatching.`
-  );
+  const [customEmployeeWelcome, setCustomEmployeeWelcome] = useState<string>('');
   const [isSendingEmployeeEmails, setIsSendingEmployeeEmails] = useState<boolean>(false);
   const [employeeEmailDispatchStatus, setEmployeeEmailDispatchStatus] = useState<{
     sent: boolean;
     count?: number;
     message?: string;
+    error?: string;
     timestamp?: string;
   } | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   // Load existing company data on open
   useEffect(() => {
@@ -211,42 +178,39 @@ export const CompanyAdminOnboardingWizard: React.FC<CompanyAdminOnboardingWizard
       try {
         const companies = await loadCompaniesFromFirestore();
         if (companies && companies.length > 0) {
-          const matched = companies.find(c => c.id === companyId || c.name.toLowerCase() === companyName.toLowerCase()) || companies[0];
-          setCompanyId(matched.id);
-          setCompanyName(matched.name);
-          setCompanyDomain(matched.domain);
-          setCompanyIndustry(matched.industry || 'CleanTech & Renewable Energy AI');
-          setCompanyTier(matched.tier || 'enterprise');
-          setMonthlyTokenQuota(matched.monthlyTokenQuota || 100_000_000);
-          setMonthlyBudgetUsd(matched.monthlyBudgetUsd || 5000);
-          setAllowedModels(matched.allowedModels || [
-            'gemini-3.7-flash',
-            'gemini-3.1-flash-lite',
-            'claude-3-7-sonnet-20250219',
-            'gpt-4o',
-            'deepseek-reasoner'
-          ]);
-          setRoutingPriority(matched.routingPriority as any || 'subscription_first');
-          setSmtpAlertsEnabled(matched.smtpAlertsEnabled !== undefined ? matched.smtpAlertsEnabled : true);
-          if (matched.superAdminEmail) setSuperAdminEmail(matched.superAdminEmail);
-          
-          if (matched.companyAdmins && matched.companyAdmins.length > 0) {
-            const admin = matched.companyAdmins[0];
-            setCompanyAdminName(admin.name);
-            setCompanyAdminEmail(admin.email);
-            if (admin.title) setCompanyAdminTitle(admin.title);
+          const matched = companies.find(c => (companyId && c.id === companyId) || (companyName && c.name.toLowerCase() === companyName.toLowerCase())) || companies[0];
+          if (matched) {
+            setCompanyId(matched.id || '');
+            setCompanyName(matched.name || '');
+            setCompanyDomain(matched.domain || '');
+            setCompanyIndustry(matched.industry || '');
+            setCompanyTier(matched.tier || 'enterprise');
+            setMonthlyTokenQuota(matched.monthlyTokenQuota || 50_000_000);
+            setMonthlyBudgetUsd(matched.monthlyBudgetUsd || 1000);
+            if (matched.allowedModels && matched.allowedModels.length > 0) {
+              setAllowedModels(matched.allowedModels);
+            }
+            setRoutingPriority(matched.routingPriority as any || 'byok_first');
+            setSmtpAlertsEnabled(matched.smtpAlertsEnabled !== undefined ? matched.smtpAlertsEnabled : true);
+            if (matched.superAdminEmail) setSuperAdminEmail(matched.superAdminEmail);
+            
+            if (matched.companyAdmins && matched.companyAdmins.length > 0) {
+              const admin = matched.companyAdmins[0];
+              if (admin.name) setCompanyAdminName(admin.name);
+              if (admin.email) setCompanyAdminEmail(admin.email);
+              if (admin.title) setCompanyAdminTitle(admin.title);
+            }
+            if (matched.domain) setSsoDomain(matched.domain);
           }
-          if (matched.domain) setSsoDomain(matched.domain);
         }
       } catch (err) {
-        console.warn('Notice: Loading default company data for wizard:', err);
+        console.warn('Notice: Loading company data for wizard:', err);
       } finally {
         setIsLoadingCompany(false);
       }
     }
 
     fetchCompanyData();
-    setAcceptanceSignature(`Signed electronically by ${companyAdminName} (${companyAdminEmail}) on ${new Date().toLocaleDateString()}`);
   }, [isOpen, companyId]);
 
   if (!isOpen) return null;
@@ -340,28 +304,38 @@ export const CompanyAdminOnboardingWizard: React.FC<CompanyAdminOnboardingWizard
         }),
       });
 
-      const data = await res.json();
-      setEmployeeEmailDispatchStatus({
-        sent: true,
-        count: onboardedMembers.length,
-        message: `Setup instructions dispatched successfully to ${onboardedMembers.length} company employees via SMTP gateway.`,
-        timestamp: new Date().toLocaleTimeString(),
-      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        setEmployeeEmailDispatchStatus({
+          sent: true,
+          count: onboardedMembers.length,
+          message: `Setup instructions dispatched successfully to ${onboardedMembers.length} company employees via SMTP gateway (Message-ID: ${data.messageId || 'sent'}).`,
+          timestamp: new Date().toLocaleTimeString(),
+        });
 
-      // Log email event to Firestore
-      logEmailToFirestore({
-        to: targetEmails.join(', '),
-        from: companyAdminEmail,
-        subject: `🏢 [${companyName}] Action Required: Setup Your Enterprise AI Workspace`,
-        emailType: 'company_employee_setup_guide',
-        status: 'sent',
-        sentBy: companyAdminEmail,
-      }).catch(err => console.warn('Email log notice:', err));
-
+        // Log email event to Firestore
+        logEmailToFirestore({
+          to: targetEmails.join(', '),
+          from: companyAdminEmail,
+          subject: `🏢 [${companyName}] Action Required: Setup Your Enterprise AI Workspace`,
+          emailType: 'company_employee_setup_guide',
+          status: 'sent',
+          sentBy: companyAdminEmail,
+        }).catch(err => console.warn('Email log notice:', err));
+      } else {
+        const errorDetail = data.error || data.recommendation || 'SMTP dispatch error. Please verify SMTP username and password/App Password in server settings.';
+        setEmployeeEmailDispatchStatus({
+          sent: false,
+          error: errorDetail,
+          message: `Email dispatch notice: ${errorDetail}`,
+          timestamp: new Date().toLocaleTimeString(),
+        });
+      }
     } catch (err: any) {
       setEmployeeEmailDispatchStatus({
         sent: false,
-        message: 'SMTP dispatch notice: ' + (err.message || 'Dispatched via fallback relay queue.'),
+        error: err.message,
+        message: 'SMTP dispatch error: ' + (err.message || 'Unable to connect to SMTP relay.'),
         timestamp: new Date().toLocaleTimeString(),
       });
     } finally {
@@ -372,6 +346,7 @@ export const CompanyAdminOnboardingWizard: React.FC<CompanyAdminOnboardingWizard
   // STEP 7: Confirm Final Setup & Save to Firestore
   const handleFinalConfirmSetup = async () => {
     setIsSubmitting(true);
+    setSubmitError(null);
     try {
       const companyPayload: CompanyFirestore = {
         id: companyId,
@@ -482,9 +457,8 @@ export const CompanyAdminOnboardingWizard: React.FC<CompanyAdminOnboardingWizard
         onComplete(companyPayload);
       }
     } catch (err: any) {
-      console.warn('Notice: Error completing company admin onboarding:', err);
-      // Still set completed in client mode
-      setIsCompleted(true);
+      console.error('Error completing company admin onboarding:', err);
+      setSubmitError(err.message || 'Failed to save setup to Firestore database. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -681,12 +655,13 @@ export const CompanyAdminOnboardingWizard: React.FC<CompanyAdminOnboardingWizard
 
                 <div className="pt-2 border-t border-white/10">
                   <label className="block text-[11px] font-mono text-slate-400 mb-1">
-                    Electronic Signature Verification
+                    Electronic Signature Verification (Enter Full Name)
                   </label>
                   <input
                     type="text"
                     value={acceptanceSignature}
                     onChange={(e) => setAcceptanceSignature(e.target.value)}
+                    placeholder={`e.g. ${companyAdminName || 'Jane Doe'} - Company Administrator`}
                     className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-xs font-mono text-purple-300 focus:outline-none focus:border-purple-500"
                   />
                 </div>
@@ -948,6 +923,7 @@ export const CompanyAdminOnboardingWizard: React.FC<CompanyAdminOnboardingWizard
                       type="text"
                       value={companyName}
                       onChange={(e) => setCompanyName(e.target.value)}
+                      placeholder="e.g. Acme Corporation"
                       className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-white font-bold focus:outline-none focus:border-teal-500"
                     />
                   </div>
@@ -962,12 +938,18 @@ export const CompanyAdminOnboardingWizard: React.FC<CompanyAdminOnboardingWizard
                         placeholder="https://example.com/logo.png"
                         className="flex-1 px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-white font-mono text-xs focus:outline-none focus:border-teal-500"
                       />
-                      <img
-                        src={companyLogoUrl}
-                        alt="Logo preview"
-                        className="w-8 h-8 rounded-lg object-cover ring-1 ring-white/20 shrink-0"
-                        onError={(e) => { (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=200'; }}
-                      />
+                      {companyLogoUrl ? (
+                        <img
+                          src={companyLogoUrl}
+                          alt="Logo preview"
+                          className="w-8 h-8 rounded-lg object-cover ring-1 ring-white/20 shrink-0"
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                        />
+                      ) : (
+                        <div className="w-8 h-8 rounded-lg bg-slate-800 border border-white/10 flex items-center justify-center text-slate-500 text-[10px]">
+                          Logo
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -977,6 +959,7 @@ export const CompanyAdminOnboardingWizard: React.FC<CompanyAdminOnboardingWizard
                       type="text"
                       value={companyHelpdeskUrl}
                       onChange={(e) => setCompanyHelpdeskUrl(e.target.value)}
+                      placeholder="e.g. https://support.example.com"
                       className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-white font-mono focus:outline-none focus:border-teal-500"
                     />
                   </div>
@@ -989,6 +972,7 @@ export const CompanyAdminOnboardingWizard: React.FC<CompanyAdminOnboardingWizard
                       type="email"
                       value={companyContactEmail}
                       onChange={(e) => setCompanyContactEmail(e.target.value)}
+                      placeholder="e.g. ai-support@example.com"
                       className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-white font-mono focus:outline-none focus:border-teal-500"
                     />
                   </div>
@@ -999,6 +983,7 @@ export const CompanyAdminOnboardingWizard: React.FC<CompanyAdminOnboardingWizard
                       type="text"
                       value={companyContactPhone}
                       onChange={(e) => setCompanyContactPhone(e.target.value)}
+                      placeholder="e.g. +1 (800) 555-0199"
                       className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-white font-mono focus:outline-none focus:border-teal-500"
                     />
                   </div>
@@ -1009,6 +994,7 @@ export const CompanyAdminOnboardingWizard: React.FC<CompanyAdminOnboardingWizard
                       type="text"
                       value={companySupportSlack}
                       onChange={(e) => setCompanySupportSlack(e.target.value)}
+                      placeholder="e.g. #ai-workspace-help"
                       className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-white font-mono focus:outline-none focus:border-teal-500"
                     />
                   </div>
@@ -1024,6 +1010,7 @@ export const CompanyAdminOnboardingWizard: React.FC<CompanyAdminOnboardingWizard
                   rows={2}
                   value={companyEscalationNotes}
                   onChange={(e) => setCompanyEscalationNotes(e.target.value)}
+                  placeholder="e.g. For token quota increases or requesting frontier reasoning tier access, please contact the Internal AI Operations Team."
                   className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-white text-xs focus:outline-none focus:border-teal-500"
                 />
               </div>
@@ -1168,41 +1155,48 @@ export const CompanyAdminOnboardingWizard: React.FC<CompanyAdminOnboardingWizard
 
                 {/* Onboarded Members List */}
                 <div className="max-h-48 overflow-y-auto space-y-1.5 pt-2 border-t border-white/5">
-                  {onboardedMembers.map((member) => (
-                    <div
-                      key={member.id}
-                      className="p-2.5 rounded-xl bg-slate-900 border border-white/5 flex items-center justify-between gap-3 text-xs"
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <div className="w-7 h-7 rounded-lg bg-amber-500/20 text-amber-300 font-bold flex items-center justify-center text-xs shrink-0">
-                          {member.name.charAt(0)}
-                        </div>
-                        <div className="truncate">
-                          <span className="font-bold text-white">{member.name}</span>
-                          <span className="text-slate-400 font-mono ml-2 text-[11px]">&lt;{member.email}&gt;</span>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className="px-2 py-0.5 rounded bg-white/5 text-slate-300 text-[10px]">
-                          {member.department}
-                        </span>
-                        <span className="px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 font-mono text-[10px]">
-                          {member.tierCap}
-                        </span>
-                        <span className="text-[10px] font-mono text-emerald-400">
-                          {(member.monthlyTokenQuota / 1_000_000).toFixed(0)}M tok
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setOnboardedMembers(prev => prev.filter(m => m.id !== member.id))}
-                          className="p-1 text-slate-500 hover:text-rose-400"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
+                  {onboardedMembers.length === 0 ? (
+                    <div className="py-6 text-center text-xs text-slate-500 bg-slate-900/50 rounded-xl border border-dashed border-white/10 space-y-1">
+                      <div>No team members added yet.</div>
+                      <div className="text-[11px] text-slate-600">Enter member details above or paste a CSV roster to onboard.</div>
                     </div>
-                  ))}
+                  ) : (
+                    onboardedMembers.map((member) => (
+                      <div
+                        key={member.id}
+                        className="p-2.5 rounded-xl bg-slate-900 border border-white/5 flex items-center justify-between gap-3 text-xs"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="w-7 h-7 rounded-lg bg-amber-500/20 text-amber-300 font-bold flex items-center justify-center text-xs shrink-0">
+                            {member.name.charAt(0)}
+                          </div>
+                          <div className="truncate">
+                            <span className="font-bold text-white">{member.name}</span>
+                            <span className="text-slate-400 font-mono ml-2 text-[11px]">&lt;{member.email}&gt;</span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="px-2 py-0.5 rounded bg-white/5 text-slate-300 text-[10px]">
+                            {member.department}
+                          </span>
+                          <span className="px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 font-mono text-[10px]">
+                            {member.tierCap}
+                          </span>
+                          <span className="text-[10px] font-mono text-emerald-400">
+                            {(member.monthlyTokenQuota / 1_000_000).toFixed(0)}M tok
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setOnboardedMembers(prev => prev.filter(m => m.id !== member.id))}
+                            className="p-1 text-slate-500 hover:text-rose-400"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
             </div>
@@ -1297,6 +1291,7 @@ export const CompanyAdminOnboardingWizard: React.FC<CompanyAdminOnboardingWizard
                   rows={2}
                   value={customEmployeeWelcome}
                   onChange={(e) => setCustomEmployeeWelcome(e.target.value)}
+                  placeholder={`e.g. Welcome to the ${companyName || 'Corporate'} AI Workspace! Use your corporate SSO credentials to access approved models with intelligent routing.`}
                   className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-white text-xs focus:outline-none focus:border-cyan-500"
                 />
               </div>
@@ -1403,6 +1398,16 @@ export const CompanyAdminOnboardingWizard: React.FC<CompanyAdminOnboardingWizard
                       </p>
                     </div>
                   </div>
+
+                  {submitError && (
+                    <div className="p-3 bg-rose-950/40 border border-rose-500/40 rounded-xl text-rose-200 flex items-start gap-2.5">
+                      <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <div className="font-bold text-rose-100">Setup Provisioning Error</div>
+                        <div className="text-[11px] text-rose-200/90 leading-relaxed">{submitError}</div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* 6-Pillar Summary Bento */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

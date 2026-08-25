@@ -3146,6 +3146,149 @@ app.post("/api/admin/smtp/send-test", async (req, res) => {
   }
 });
 
+// 5b. Send Welcome / Onboarding Package Email (Alias endpoint for company & employee wizards)
+app.post("/api/admin/smtp/send-welcome", async (req, res) => {
+  const {
+    to,
+    recipientName,
+    companyName,
+    companyAdminName,
+    companyAdminEmail,
+    domain,
+    totalEmployees,
+    contactEmail,
+    contactPhone,
+    allowedModelsCount,
+    monthlyQuotaM,
+    customMessage,
+    variables,
+  } = req.body;
+
+  const recipientEmail = (to || companyAdminEmail || "solarastra.in@gmail.com").trim();
+  const rawRecipientPart = recipientEmail.includes('@') ? recipientEmail.split('@')[0] : recipientEmail;
+  const resolvedName = recipientName || companyAdminName || (rawRecipientPart.charAt(0).toUpperCase() + rawRecipientPart.slice(1));
+  const orgName = companyName || "Enterprise Workspace";
+
+  const emailSubject = `🏢 [${orgName}] Enterprise AI Setup & Employee Access Guide`;
+  const htmlContent = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #0f172a; color: #f8fafc; border-radius: 16px; border: 1px solid #334155; overflow: hidden; padding: 28px;">
+      <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #1e293b; padding-bottom: 16px; margin-bottom: 24px;">
+        <div style="font-size: 20px; font-weight: 800; color: #818cf8; letter-spacing: -0.5px;">⚡ WhyOr Dispatch AI</div>
+        <span style="background-color: rgba(52, 211, 153, 0.15); color: #34d399; border: 1px solid rgba(52, 211, 153, 0.3); font-size: 11px; padding: 4px 10px; border-radius: 9999px; font-weight: 700; text-transform: uppercase;">Employee Access Guide</span>
+      </div>
+      <div style="font-size: 14px; line-height: 1.6; color: #cbd5e1;">
+        <p style="margin-top: 0;">Hello <strong>${resolvedName}</strong>,</p>
+        <p>Your team at <strong>${orgName}</strong> is now configured on the <strong>WhyOr Dispatch AI Enterprise Gateway</strong>.</p>
+        <div style="background-color: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 18px; margin: 20px 0;">
+          <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #334155;">
+            <span style="color: #94a3b8; font-size: 12px;">Organization:</span>
+            <span style="font-weight: 700; color: #f8fafc; font-size: 12px; font-family: monospace;">${orgName}</span>
+          </div>
+          ${domain ? `<div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #334155;"><span style="color: #94a3b8; font-size: 12px;">Domain:</span><span style="font-weight: 600; color: #38bdf8; font-size: 12px; font-family: monospace;">${domain}</span></div>` : ''}
+          ${totalEmployees ? `<div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #334155;"><span style="color: #94a3b8; font-size: 12px;">Provisioned Employees:</span><span style="font-weight: 700; color: #34d399; font-size: 12px; font-family: monospace;">${totalEmployees} members</span></div>` : ''}
+          ${monthlyQuotaM ? `<div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #334155;"><span style="color: #94a3b8; font-size: 12px;">Allocated Quota:</span><span style="font-weight: 700; color: #fbbf24; font-size: 12px; font-family: monospace;">${monthlyQuotaM}M tokens/mo</span></div>` : ''}
+        </div>
+        ${customMessage ? `<p style="font-size: 13px; color: #cbd5e1; background-color: #1e293b; padding: 12px; border-radius: 8px;">${customMessage}</p>` : ''}
+        <div style="text-align: center; margin: 28px 0 16px 0;">
+          <a href="https://ais-dev-gcdyq3rgswqtgkxcjbfmqt-4552824319.us-west2.run.app" style="display: inline-block; background-color: #6366f1; color: #ffffff; text-decoration: none; font-size: 13px; font-weight: 700; padding: 12px 24px; border-radius: 10px; box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);">
+            Sign In with Enterprise SSO &rarr;
+          </a>
+        </div>
+      </div>
+      <div style="margin-top: 28px; border-top: 1px solid #1e293b; padding-top: 16px; font-size: 11px; color: #64748b; text-align: center;">
+        WhyOr Dispatch AI Enterprise • SuperAdmin: solarastra.in@gmail.com • Generated ${new Date().toISOString()}
+      </div>
+    </div>
+  `;
+
+  const activeUser = smtpSettings.user;
+  const activePass = cleanSmtpPassword(smtpSettings.pass);
+
+  if (!activeUser || !activePass) {
+    const failedLog = {
+      id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      to: recipientEmail,
+      from: `"${smtpSettings.fromName}" <${smtpSettings.fromEmail || activeUser}>`,
+      subject: emailSubject,
+      emailType: "company_welcome_guide",
+      status: "failed" as const,
+      errorMessage: "SMTP credentials not configured. Please set your SMTP Password/App Password in Settings > SMTP Server.",
+      sentAt: new Date().toISOString(),
+      sentBy: req.body.sentBy || "Admin",
+    };
+    emailLogs.unshift(failedLog);
+    return res.status(400).json({
+      success: false,
+      error: "SMTP credentials required: Please specify both an SMTP Username (email) and Password/App Password in Settings > SMTP Server.",
+      recipient: recipientEmail,
+      recommendation: "Google/Gmail requires a 16-character App Password (myaccount.google.com/apppasswords) with 2-Step Verification enabled.",
+      log: failedLog,
+    });
+  }
+
+  try {
+    const transporter = nodemailer.createTransport({
+      host: smtpSettings.host || "smtp.gmail.com",
+      port: smtpSettings.port || 587,
+      secure: smtpSettings.port === 465,
+      auth: { user: activeUser, pass: activePass },
+      connectionTimeout: 8000,
+      greetingTimeout: 8000,
+      socketTimeout: 8000,
+    });
+
+    const info = await transporter.sendMail({
+      from: `"${smtpSettings.fromName || 'WhyOr Dispatch AI'}" <${smtpSettings.fromEmail || activeUser}>`,
+      to: recipientEmail,
+      subject: emailSubject,
+      html: htmlContent,
+      text: `WhyOr Dispatch AI Enterprise Setup for ${orgName}. Welcome ${resolvedName}. Please login at https://ais-dev-gcdyq3rgswqtgkxcjbfmqt-4552824319.us-west2.run.app`,
+    });
+
+    const successLog = {
+      id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      to: recipientEmail,
+      from: `"${smtpSettings.fromName}" <${smtpSettings.fromEmail || activeUser}>`,
+      subject: emailSubject,
+      emailType: "company_welcome_guide",
+      status: "sent" as const,
+      messageId: info.messageId,
+      sentAt: new Date().toISOString(),
+      sentBy: req.body.sentBy || "Admin",
+    };
+    emailLogs.unshift(successLog);
+
+    res.json({
+      success: true,
+      messageId: info.messageId,
+      recipient: recipientEmail,
+      message: `Welcome setup guide sent to ${recipientEmail} (Message-ID: ${info.messageId})`,
+      log: successLog,
+    });
+  } catch (err: any) {
+    const failedLog = {
+      id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      to: recipientEmail,
+      from: `"${smtpSettings.fromName}" <${smtpSettings.fromEmail || activeUser}>`,
+      subject: emailSubject,
+      emailType: "company_welcome_guide",
+      status: "failed" as const,
+      errorMessage: err.message,
+      sentAt: new Date().toISOString(),
+      sentBy: req.body.sentBy || "Admin",
+    };
+    emailLogs.unshift(failedLog);
+
+    res.status(400).json({
+      success: false,
+      error: err.message || "Failed to send welcome email through SMTP transport",
+      recipient: recipientEmail,
+      recommendation: "Ensure SMTP port, host, and Gmail App Password are valid.",
+      log: failedLog,
+    });
+  }
+});
+
 // 6. Get Email Logs
 app.get("/api/admin/smtp/logs", (req, res) => {
   res.json({

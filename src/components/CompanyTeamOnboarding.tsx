@@ -220,7 +220,7 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
   const [editingCorpAdmin, setEditingCorpAdmin] = useState<CompanyAdminUser | null>(null);
   const [corpAdminName, setCorpAdminName] = useState<string>('');
   const [corpAdminEmail, setCorpAdminEmail] = useState<string>('');
-  const [corpAdminTitle, setCorpAdminTitle] = useState<string>('Director of AI Infrastructure');
+  const [corpAdminTitle, setCorpAdminTitle] = useState<string>('');
   const [corpAdminTierCap, setCorpAdminTierCap] = useState<string>('Frontier Tier 3');
   const [corpAdminQuota, setCorpAdminQuota] = useState<number>(50_000_000);
   const [corpAdminPrivileges, setCorpAdminPrivileges] = useState<CorporateAdminPrivileges>(DEFAULT_CORPORATE_PRIVILEGES);
@@ -231,9 +231,9 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
   // New Company Form State
   const [newCompanyName, setNewCompanyName] = useState<string>('');
   const [newCompanyDomain, setNewCompanyDomain] = useState<string>('');
-  const [newCompanyIndustry, setNewCompanyIndustry] = useState<string>('Enterprise AI & Software');
+  const [newCompanyIndustry, setNewCompanyIndustry] = useState<string>('');
   const [newCompanyTier, setNewCompanyTier] = useState<'enterprise' | 'growth' | 'startup' | 'gov_defense'>('enterprise');
-  const [newCompanyBillingEmail, setNewCompanyBillingEmail] = useState<string>('solarastra.in@gmail.com');
+  const [newCompanyBillingEmail, setNewCompanyBillingEmail] = useState<string>('');
   const [newCompanyQuota, setNewCompanyQuota] = useState<number>(50_000_000);
   const [newCompanyBudget, setNewCompanyBudget] = useState<number>(3000);
   const [newCompanyRouting, setNewCompanyRouting] = useState<'subscription_first' | 'byok_first' | 'balanced'>('subscription_first');
@@ -248,9 +248,9 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
   const [isSubmittingCompany, setIsSubmittingCompany] = useState<boolean>(false);
 
   // Designated Corporate Admin Form State
-  const [newCorpAdminName, setNewCorpAdminName] = useState<string>('Elena Rostova');
-  const [newCorpAdminEmail, setNewCorpAdminEmail] = useState<string>('elena.admin@solarastra.in');
-  const [newCorpAdminTitle, setNewCorpAdminTitle] = useState<string>('Director of AI Engineering');
+  const [newCorpAdminName, setNewCorpAdminName] = useState<string>('');
+  const [newCorpAdminEmail, setNewCorpAdminEmail] = useState<string>('');
+  const [newCorpAdminTitle, setNewCorpAdminTitle] = useState<string>('');
   const [newCorpAdminPrivileges, setNewCorpAdminPrivileges] = useState<CorporateAdminPrivileges>(DEFAULT_CORPORATE_PRIVILEGES);
 
   // Multi-Step Create Company Wizard State (5 Steps as requested)
@@ -262,9 +262,7 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
   const [companyWizardStep, setCompanyWizardStep] = useState<1 | 2 | 3 | 4 | 5>(1);
   const [hasAttemptedAdminStep, setHasAttemptedAdminStep] = useState<boolean>(false);
   const [adminStepError, setAdminStepError] = useState<string | null>(null);
-  const [customSetupInstructions, setCustomSetupInstructions] = useState<string>(
-    'Please follow the steps below to configure your corporate teams, connect enterprise BYOK keys, and allocate member quotas.'
-  );
+  const [customSetupInstructions, setCustomSetupInstructions] = useState<string>('');
   const [isSendingWizardEmail, setIsSendingWizardEmail] = useState<boolean>(false);
   const [wizardEmailDispatchStatus, setWizardEmailDispatchStatus] = useState<{
     sent: boolean;
@@ -308,6 +306,14 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
     setAdminStepError(null);
     setWizardEmailDispatchStatus(null);
     setWizardCompletedCompany(null);
+    setNewCompanyName('');
+    setNewCompanyDomain('');
+    setNewCompanyIndustry('');
+    setNewCompanyBillingEmail('');
+    setNewCorpAdminName('');
+    setNewCorpAdminEmail('');
+    setNewCorpAdminTitle('');
+    setCustomSetupInstructions('');
     setShowOnboardCompanyModal(true);
   };
 
@@ -446,14 +452,7 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
 
   // Bulk CSV Employee Seeding State
   const [showBulkUploadModal, setShowBulkUploadModal] = useState<boolean>(false);
-  const [bulkCsvText, setBulkCsvText] = useState<string>(
-`Full Name, Email, Role, Team, Model Tier, Monthly Token Quota, Monthly Budget ($)
-Elena Rostova, elena.dev@testing123.com, Senior AI Developer, AI Core Lab, Frontier Tier 3, 25000000, 1000
-David Kim, david.k@testing123.com, AI / ML Engineer, AI Core Lab, Frontier Tier 3, 20000000, 800
-Sarah Jenkins, s.jenkins@testing123.com, Product Manager (AI), Product Innovation, General Tier 2, 10000000, 500
-Michael Chang, m.chang@testing123.com, Prompt & QA Engineer, Validation Team, Fast Tier 1, 10000000, 400
-Aisha Patel, aisha.p@testing123.com, Staff AI Researcher, Research & Deep Reasoning, Frontier Tier 3, 30000000, 1500`
-  );
+  const [bulkCsvText, setBulkCsvText] = useState<string>('');
   const [bulkParsedMembers, setBulkParsedMembers] = useState<Array<{
     id: string;
     name: string;
@@ -1096,40 +1095,82 @@ Aisha Patel, aisha.p@testing123.com, Staff AI Researcher, Research & Deep Reason
         };
 
         const targetEmail = initialAdmins[0]?.email || newCompany.billingEmail;
-        fetch(resolveApiUrl('/api/admin/smtp/send-test'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            to: targetEmail,
-            subject: `🏢 [WhyOr Enterprise] Setup Instructions: Your ${newCompany.name} AI Workspace is Ready`,
-            templateType: 'company_onboarded',
-            recipientName: initialAdmins[0]?.name || newCompany.name + ' Administrator',
-            companyName: newCompany.name,
-            allocatedTokens: `${newCompany.monthlyTokenQuota.toLocaleString()} tokens / month`,
-            budgetLimit: `$${newCompany.monthlyBudgetUsd.toLocaleString()} / month`,
-            tenantDomain: newCompany.domain,
-            authorizedModels: newCompany.allowedModels.join(', '),
-            routingPriority: newCompany.routingPriority === 'byok_first' ? 'BYOK Dedicated Priority' : 'Zero-Markup Flat-Rate Subscriptions',
-            customMessage: customSetupInstructions || `Company ${newCompany.name} has been successfully provisioned on WhyOr Dispatch AI by SuperAdmin ${currentUser?.email || 'solarastra.in@gmail.com'}. Allocated quota: ${newCompany.monthlyTokenQuota.toLocaleString()} tokens/mo.`,
-            sentBy: currentUser?.email || 'solarastra.in@gmail.com',
-            variables: companyVars,
-          }),
-        }).then(() => {
-          setWizardEmailDispatchStatus({
-            sent: true,
-            timestamp: new Date().toLocaleTimeString(),
-            message: `Setup email sent to ${targetEmail}`,
+        try {
+          const mailRes = await fetch(resolveApiUrl('/api/admin/smtp/send-test'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              to: targetEmail,
+              subject: `🏢 [WhyOr Enterprise] Setup Instructions: Your ${newCompany.name} AI Workspace is Ready`,
+              templateType: 'company_onboarded',
+              recipientName: initialAdmins[0]?.name || newCompany.name + ' Administrator',
+              companyName: newCompany.name,
+              allocatedTokens: `${newCompany.monthlyTokenQuota.toLocaleString()} tokens / month`,
+              budgetLimit: `$${newCompany.monthlyBudgetUsd.toLocaleString()} / month`,
+              tenantDomain: newCompany.domain,
+              authorizedModels: newCompany.allowedModels.join(', '),
+              routingPriority: newCompany.routingPriority === 'byok_first' ? 'BYOK Dedicated Priority' : 'Zero-Markup Flat-Rate Subscriptions',
+              customMessage: customSetupInstructions || `Company ${newCompany.name} has been successfully provisioned on WhyOr Dispatch AI by SuperAdmin ${currentUser?.email || 'solarastra.in@gmail.com'}. Allocated quota: ${newCompany.monthlyTokenQuota.toLocaleString()} tokens/mo.`,
+              sentBy: currentUser?.email || 'solarastra.in@gmail.com',
+              variables: companyVars,
+            }),
           });
-        }).catch((mailErr) => {
-          console.warn('SMTP welcome email skipped/failed:', mailErr);
+
+          const mailData = await mailRes.json().catch(() => ({}));
+          if (mailRes.ok && mailData.success) {
+            setWizardEmailDispatchStatus({
+              sent: true,
+              timestamp: new Date().toLocaleTimeString(),
+              message: `Setup email sent to ${targetEmail} (Message-ID: ${mailData.messageId || 'sent'})`,
+              latencyMs: mailData.latencyMs,
+            });
+
+            await logEmailToFirestore({
+              to: targetEmail,
+              from: `WhyOr Dispatch AI Enterprise <${smtpStatus?.fromEmail || 'solarastra.in@gmail.com'}>`,
+              subject: `🏢 [WhyOr Enterprise] Setup Instructions: Your ${newCompany.name} AI Workspace is Ready`,
+              emailType: 'company_onboarded',
+              status: 'sent',
+              messageId: mailData.messageId,
+              sentBy: currentUser?.email || 'solarastra.in@gmail.com',
+            });
+
+            setNotice({
+              type: 'success',
+              text: `Enterprise tenant '${newCompany.name}' successfully provisioned and setup email sent to ${targetEmail}!`,
+            });
+          } else {
+            const errDetail = mailData.error || mailData.recommendation || 'SMTP delivery failed. Check your SMTP server configuration.';
+            setWizardEmailDispatchStatus({
+              sent: false,
+              timestamp: new Date().toLocaleTimeString(),
+              error: `Email to ${targetEmail} could not be delivered: ${errDetail}`,
+            });
+
+            setNotice({
+              type: 'error',
+              text: `Company '${newCompany.name}' was created, but welcome email to ${targetEmail} failed: ${errDetail}. You can configure SMTP or retry below.`,
+            });
+          }
+        } catch (mailErr: any) {
+          const errDetail = mailErr.message || 'Network error connecting to SMTP service.';
+          setWizardEmailDispatchStatus({
+            sent: false,
+            timestamp: new Date().toLocaleTimeString(),
+            error: `Email delivery error: ${errDetail}`,
+          });
+
+          setNotice({
+            type: 'error',
+            text: `Company '${newCompany.name}' was created, but welcome email failed: ${errDetail}.`,
+          });
+        }
+      } else {
+        setNotice({
+          type: 'success',
+          text: `Enterprise tenant '${newCompany.name}' and Corporate Admin '${initialAdmins[0]?.email || 'default'}' successfully provisioned!`,
         });
       }
-
-      // 6. Final success toast
-      setNotice({
-        type: 'success',
-        text: `Enterprise tenant '${newCompany.name}' and Corporate Admin '${initialAdmins[0]?.email || 'default'}' successfully provisioned!`,
-      });
     } catch (err: any) {
       // 7. ROLLBACK: Revert the visual addition immediately and display error toast
       setCompanies(previousCompanies);
@@ -1170,7 +1211,7 @@ Aisha Patel, aisha.p@testing123.com, Staff AI Researcher, Research & Deep Reason
       setEditingCorpAdmin(null);
       setCorpAdminName('');
       setCorpAdminEmail('');
-      setCorpAdminTitle('Director of AI Infrastructure');
+      setCorpAdminTitle('');
       setCorpAdminTierCap('Frontier Tier 3');
       setCorpAdminQuota(50_000_000);
       setCorpAdminPrivileges(DEFAULT_CORPORATE_PRIVILEGES);
@@ -3838,10 +3879,60 @@ Aisha Patel, aisha.p@${selectedCompany.domain}, Staff AI Researcher, Research & 
                         </div>
                       </div>
 
-                      <div className="text-[10px] text-slate-400 flex items-center gap-1.5 pt-1">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                        <span>Setup email with step-by-step instructions dispatched to {wizardCompletedCompany.companyAdmins?.[0]?.email}</span>
-                      </div>
+                      {/* Dynamic Email Delivery Audit Card */}
+                      {wizardEmailDispatchStatus?.sent ? (
+                        <div className="p-3 bg-emerald-950/30 border border-emerald-500/30 rounded-xl text-emerald-300 flex items-start gap-2.5">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                          <div className="space-y-0.5">
+                            <div className="font-semibold text-emerald-200">Setup Email Successfully Dispatched</div>
+                            <div className="text-[10px] text-emerald-300/80 font-mono">
+                              {wizardEmailDispatchStatus.message || `Onboarding guide delivered to ${wizardCompletedCompany.companyAdmins?.[0]?.email}`}
+                              {wizardEmailDispatchStatus.latencyMs ? ` (${wizardEmailDispatchStatus.latencyMs}ms)` : ''}
+                            </div>
+                          </div>
+                        </div>
+                      ) : wizardEmailDispatchStatus && !wizardEmailDispatchStatus.sent ? (
+                        <div className="p-3 bg-amber-950/40 border border-amber-500/40 rounded-xl text-amber-200 space-y-2">
+                          <div className="flex items-start gap-2">
+                            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                            <div className="space-y-1 flex-1">
+                              <div className="font-bold text-amber-100 flex items-center justify-between">
+                                <span>Email Delivery Alert</span>
+                                <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">Action Needed</span>
+                              </div>
+                              <div className="text-[11px] text-amber-200/90 leading-relaxed">
+                                {wizardEmailDispatchStatus.error || 'SMTP server could not deliver the email. Please check your SMTP configuration.'}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-amber-500/20">
+                            <button
+                              type="button"
+                              onClick={handleSendWizardSetupEmail}
+                              disabled={isSendingWizardEmail}
+                              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 text-[10px] font-semibold transition-colors cursor-pointer"
+                            >
+                              <RefreshCw className={`w-3 h-3 ${isSendingWizardEmail ? 'animate-spin' : ''}`} />
+                              <span>{isSendingWizardEmail ? 'Retrying...' : 'Retry Email Dispatch'}</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => setShowSmtpQuickConfigModal(true)}
+                              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-white/10 text-slate-300 text-[10px] font-medium transition-colors cursor-pointer"
+                            >
+                              <Lock className="w-3 h-3 text-cyan-400" />
+                              <span>Configure SMTP Server</span>
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="text-[10px] text-slate-400 flex items-center gap-1.5 pt-1">
+                          <Info className="w-3.5 h-3.5 text-slate-400" />
+                          <span>Automated email notification was not requested during setup.</span>
+                        </div>
+                      )}
                     </div>
 
                     <div className="flex items-center justify-center gap-3 pt-2">
