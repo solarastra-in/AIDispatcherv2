@@ -15,6 +15,10 @@ const MARKETING_LINKS = [
   { path: "/how-it-works", label: "How it works" },
   { path: "/capabilities", label: "Capabilities" },
   { path: "/examples", label: "Examples" },
+  { path: "/benchmarks", label: "Benchmarks" },
+  { path: "/docs", label: "Docs" },
+  { path: "/pricing", label: "Pricing" },
+  { path: "/faq", label: "FAQ" },
 ];
 
 export default function AppNav({ onNavigate }: { onNavigate: (path: string) => void }) {

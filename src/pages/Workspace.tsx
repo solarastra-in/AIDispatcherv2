@@ -40,6 +40,7 @@ import {
   Building2
 } from "lucide-react";
 import { UserPersona } from "../types";
+import { usePageSEO } from "../lib/seo";
 
 type DispatchMode = "chat" | "corroborate" | "relay";
 
@@ -72,6 +73,11 @@ export default function Workspace({
   onOpenAuthGate,
   activePersona,
 }: WorkspaceProps = {}) {
+  usePageSEO({
+    tabKey: 'workspace',
+    path: '/workspace',
+  });
+
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessionTitle, setSessionTitle] = useState<string>("Active Session");
   const [mode, setMode] = useState<DispatchMode>("chat");

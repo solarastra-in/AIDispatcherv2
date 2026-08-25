@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { UserTrialInfo, getUserTrialFromFirestore, auth, onAuthChanged } from '../lib/firebase';
 import { AuthGateModal } from '../components/AuthGateModal';
+import { usePageSEO } from '../lib/seo';
 
 interface PricingPageProps {
   onNavigateTab: (tab: string) => void;
@@ -26,6 +27,11 @@ interface PricingPageProps {
 }
 
 export const PricingPage: React.FC<PricingPageProps> = ({ onNavigateTab, onOpenAuthGate }) => {
+  usePageSEO({
+    tabKey: 'pricing',
+    path: '/pricing',
+  });
+
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'annual'>('monthly');
   const [userTrial, setUserTrial] = useState<UserTrialInfo | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);

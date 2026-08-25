@@ -26,7 +26,8 @@ import {
   Sliders,
   CheckCircle2,
   Building2,
-  Crown
+  Crown,
+  HelpCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { UserPersona } from '../types';
@@ -163,6 +164,29 @@ export const Navbar: React.FC<NavbarProps> = ({
       icon: BarChart3, 
       color: 'text-emerald-400',
       badge: 'ROI' 
+    },
+    { 
+      id: 'benchmarks', 
+      label: 'Model Benchmarks', 
+      description: '2026 latency, token pricing & throughput index',
+      icon: BarChart3, 
+      color: 'text-emerald-400',
+      badge: '2026' 
+    },
+    { 
+      id: 'docs', 
+      label: 'Developer API Docs', 
+      description: '14-endpoint FastAPI reference & SDK quickstarts',
+      icon: Code2, 
+      color: 'text-cyan-400',
+      badge: 'SDK' 
+    },
+    { 
+      id: 'faq', 
+      label: 'Platform FAQ', 
+      description: 'Thompson sampling, zero data retention & BYOK guide',
+      icon: HelpCircle, 
+      color: 'text-amber-400' 
     },
     { 
       id: 'research', 

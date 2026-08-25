@@ -1322,6 +1322,22 @@ function requireAuthForBYOK(req: express.Request, res: express.Response, next: e
   });
 }
 
+/**
+ * SECURITY FIX: none of the 10 SMTP admin endpoints (settings, verify,
+ * templates, send-test, logs) had ANY authentication check — anyone
+ * could read the SMTP username/host, overwrite the SMTP password and
+ * hijack the system's outbound email configuration, or delete the audit
+ * log of sent emails. Found while systematically auditing every
+ * endpoint for auth coverage. Reuses the same real, Firebase-verified
+ * pattern as everywhere else in this file.
+ */
+function requireManageSmtp(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const email = resolveAuthenticatedEmail(req);
+  const permCheck = requireCapability(email, "manage_credentials");
+  if (permCheck.allowed) return next();
+  return res.status(401).json({ success: false, error: permCheck.reason, code: "AUTH_REQUIRED" });
+}
+
 app.post("/api/credentials/profile", requireAuthForBYOK, (req, res) => {
   const { companyName, orgId, primaryContactEmail, byokMode, preferredAuthMode } = req.body;
   if (companyName) companyProfile.companyName = companyName;
@@ -1935,7 +1951,22 @@ async function sendTrialVerificationEmail(email: string, displayName: string, co
     </html>
   `;
 
-  if (smtpSettings.user && smtpSettings.pass) {
+  // EMAIL RELIABILITY FIX: this function previously logged
+  // status: "sent" UNCONDITIONALLY — regardless of whether SMTP was even
+  // configured, and regardless of whether the real sendMail() call
+  // succeeded or threw (a thrown error was caught and only
+  // console.warn'd). Every caller `await`ed this function and then told
+  // the user "Please check your inbox" with zero way to know the email
+  // never actually went out. This is one of the most commonly-triggered
+  // emails in the whole app (fires on every signup), so this bug likely
+  // affected a large fraction of real users. Fixed to return a real
+  // result the caller can check and surface honestly.
+  let sendResult: { sent: boolean; messageId?: string; errorMessage?: string };
+
+  if (!smtpSettings.user || !smtpSettings.pass) {
+    sendResult = { sent: false, errorMessage: "SMTP is not configured (missing username or password) — no email was sent." };
+    console.error(`[Email] Trial verification email NOT sent to ${email}: SMTP not configured.`);
+  } else {
     try {
       const transporter = nodemailer.createTransport({
         host: smtpSettings.host,
@@ -1946,15 +1977,18 @@ async function sendTrialVerificationEmail(email: string, displayName: string, co
           pass: smtpSettings.pass,
         },
       });
-      await transporter.sendMail({
+      const info = await transporter.sendMail({
         from: `"${smtpSettings.fromName || 'WhyOr Dispatch AI'}" <${smtpSettings.fromEmail || smtpSettings.user}>`,
         to: email,
         subject,
         html,
         text: `Verify your email for WhyOr Free Trial. Code: ${code}. Link: ${verifyLink}`,
       });
+      sendResult = { sent: true, messageId: info.messageId };
+      console.log(`[Email] Trial verification email sent to ${email} (messageId: ${info.messageId}).`);
     } catch (e: any) {
-      console.warn("SMTP send notice:", e.message);
+      sendResult = { sent: false, errorMessage: e.message || "Unknown SMTP error" };
+      console.error(`[Email] Trial verification email FAILED for ${email}:`, e.message);
     }
   }
 
@@ -1964,11 +1998,15 @@ async function sendTrialVerificationEmail(email: string, displayName: string, co
     from: "WhyOr Verification <verify@whyor.ai>",
     subject,
     emailType: "free_trial_email_verification",
-    status: "sent" as const,
+    status: sendResult.sent ? "sent" as const : "failed" as const,
+    messageId: sendResult.messageId,
+    errorMessage: sendResult.errorMessage,
     sentAt: new Date().toISOString(),
     sentBy: "system_auth",
   });
   if (emailLogs.length > 50) emailLogs.pop();
+
+  return sendResult;
 }
 
 // 1. Email Trial Registration (generates code + token + dispatches email)
@@ -1997,13 +2035,21 @@ app.post("/api/auth/register-email-trial", async (req, res) => {
   });
 
   const baseUrl = `${req.protocol}://${req.get("host") || "localhost:3000"}`;
-  await sendTrialVerificationEmail(cleanEmail, name, code, token, baseUrl);
+  const emailResult = await sendTrialVerificationEmail(cleanEmail, name, code, token, baseUrl);
 
+  // EMAIL RELIABILITY FIX: the account/code is still created either way
+  // (success: true is still correct — the signup itself worked), but the
+  // message and a new emailDelivered flag now honestly reflect whether
+  // the email actually went out, instead of always claiming it did.
   res.json({
     success: true,
-    message: `Verification link and 6-digit code have been dispatched to ${cleanEmail}. Please check your inbox and click the link or enter the code to activate your 7-day free trial.`,
+    message: emailResult.sent
+      ? `Verification link and 6-digit code have been dispatched to ${cleanEmail}. Please check your inbox and click the link or enter the code to activate your 7-day free trial.`
+      : `Your trial code was created, but we couldn't send the verification email right now (${emailResult.errorMessage}). Use the code shown below directly, or try "Resend verification" once email delivery is fixed.`,
     email: cleanEmail,
     pendingVerification: true,
+    emailDelivered: emailResult.sent,
+    emailError: emailResult.sent ? undefined : emailResult.errorMessage,
     verificationCodeDev: code, // handy in dev/sandbox if no live SMTP is set
     token,
   });
@@ -2115,11 +2161,15 @@ app.post("/api/auth/resend-verification", async (req, res) => {
   });
 
   const baseUrl = `${req.protocol}://${req.get("host") || "localhost:3000"}`;
-  await sendTrialVerificationEmail(cleanEmail, name, code, token, baseUrl);
+  const emailResult = await sendTrialVerificationEmail(cleanEmail, name, code, token, baseUrl);
 
   res.json({
     success: true,
-    message: `Fresh verification code and direct activation link sent to ${cleanEmail}.`,
+    message: emailResult.sent
+      ? `Fresh verification code and direct activation link sent to ${cleanEmail}.`
+      : `A new code was generated, but the resend email failed (${emailResult.errorMessage}). Use the code shown below directly.`,
+    emailDelivered: emailResult.sent,
+    emailError: emailResult.sent ? undefined : emailResult.errorMessage,
     verificationCodeDev: code,
   });
 });
@@ -2415,7 +2465,7 @@ app.post("/api/credentials/direct-test", requireAuthForBYOK, async (req, res) =>
 // ==================== ADMIN CONSOLE & SMTP ENDPOINTS ====================
 
 // 1. Get SMTP Configuration (Zero Environment Variable Dependency)
-app.get("/api/admin/smtp", (req, res) => {
+app.get("/api/admin/smtp", requireManageSmtp, (req, res) => {
   res.json({
     success: true,
     settings: {
@@ -2450,7 +2500,7 @@ app.get("/api/admin/smtp", (req, res) => {
 });
 
 // 2. Update SMTP Configuration
-app.post("/api/admin/smtp", (req, res) => {
+app.post("/api/admin/smtp", requireManageSmtp, (req, res) => {
   const { 
     host, 
     port, 
@@ -2550,7 +2600,7 @@ function cleanSmtpPassword(pass: string): string {
 }
 
 // 3. Verify SMTP Connection (Handshake verification)
-app.post("/api/admin/smtp/verify", async (req, res) => {
+app.post("/api/admin/smtp/verify", requireManageSmtp, async (req, res) => {
   const { host, port, secure, requireTls, user, pass, connectionTimeout, greetingTimeout } = req.body;
   const start = Date.now();
 
@@ -2655,7 +2705,7 @@ app.post("/api/admin/smtp/verify", async (req, res) => {
 });
 
 // 4. Email Templates Retrieval & Management
-app.get("/api/admin/smtp/templates", (req, res) => {
+app.get("/api/admin/smtp/templates", requireManageSmtp, (req, res) => {
   res.json({
     success: true,
     templates: serverEmailTemplates,
@@ -2663,7 +2713,7 @@ app.get("/api/admin/smtp/templates", (req, res) => {
   });
 });
 
-app.post("/api/admin/smtp/templates", (req, res) => {
+app.post("/api/admin/smtp/templates", requireManageSmtp, (req, res) => {
   const { templates, template } = req.body;
   if (templates && typeof templates === 'object') {
     serverEmailTemplates = {
@@ -2684,7 +2734,7 @@ app.post("/api/admin/smtp/templates", (req, res) => {
   });
 });
 
-app.post("/api/admin/smtp/templates/reset", (req, res) => {
+app.post("/api/admin/smtp/templates/reset", requireManageSmtp, (req, res) => {
   res.json({
     success: true,
     message: "Email templates reset to factory defaults.",
@@ -2693,7 +2743,7 @@ app.post("/api/admin/smtp/templates/reset", (req, res) => {
 });
 
 // 5. Send Real Test Email / Audit Notification (Supports Dynamic Custom Templates)
-app.post("/api/admin/smtp/send-test", async (req, res) => {
+app.post("/api/admin/smtp/send-test", requireManageSmtp, async (req, res) => {
   const { 
     to, 
     subject, 
@@ -3289,8 +3339,322 @@ app.post("/api/admin/smtp/send-welcome", async (req, res) => {
   }
 });
 
+// 5c. Centralized Enterprise Email Notification API
+app.post("/api/email/notify", async (req, res) => {
+  const {
+    to,
+    subject,
+    templateType = "company_onboarded",
+    recipientName,
+    companyName,
+    teamName,
+    role,
+    allocatedTokens,
+    budgetLimit,
+    tenantDomain,
+    authorizedModels,
+    routingPriority,
+    customMessage,
+    variables = {},
+    htmlBody,
+    textBody,
+    sentBy = "solarastra.in@gmail.com",
+  } = req.body;
+
+  const recipientEmail = (Array.isArray(to) ? to.join(", ") : to || "").trim();
+  if (!recipientEmail || !recipientEmail.includes("@")) {
+    return res.status(400).json({
+      success: false,
+      error: "Recipient email address is required and must contain a valid domain.",
+      recipient: recipientEmail,
+    });
+  }
+
+  const activeHost = smtpSettings.host || "smtp.gmail.com";
+  let activePort = Number(smtpSettings.port) || 587;
+  let activeSecure = Boolean(smtpSettings.secure);
+  const activeUser = smtpSettings.user;
+  const activePass = cleanSmtpPassword(smtpSettings.pass);
+  const activeFromEmail = smtpSettings.fromEmail || activeUser || "solarastra.in@gmail.com";
+  const activeFromName = smtpSettings.fromName || "WhyOr Dispatch AI Enterprise";
+
+  if (!activeUser || !activePass) {
+    const failedLog = {
+      id: `mail_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      to: recipientEmail,
+      from: `${activeFromName} <${activeFromEmail}>`,
+      subject: subject || `[WhyOr Dispatch] ${templateType}`,
+      emailType: templateType,
+      status: "failed" as const,
+      errorMessage: "SMTP credentials not configured in settings.",
+      sentAt: new Date().toISOString(),
+      sentBy,
+    };
+    emailLogs.unshift(failedLog);
+
+    return res.status(400).json({
+      success: false,
+      error: "SMTP credentials required: Please specify both an SMTP Username (email) and Password/App Password in Settings > SMTP Server.",
+      recipient: recipientEmail,
+      recommendation: "Google/Gmail requires a 16-character App Password (myaccount.google.com/apppasswords) with 2-Step Verification enabled.",
+      log: failedLog,
+    });
+  }
+
+  // Lookup template if available
+  const matchedTemplate = DEFAULT_EMAIL_TEMPLATES[templateType];
+  const passedVars: Record<string, string> = { ...variables };
+
+  const resolvedRecipientName = recipientName || passedVars["{{recipient_name}}"] || passedVars.recipientName || (recipientEmail.split("@")[0] || "Team Member");
+  const resolvedCompanyName = companyName || passedVars["{{company_name}}"] || passedVars.companyName || "Enterprise Workspace";
+  const resolvedTeamName = teamName || passedVars["{{team_name}}"] || passedVars.teamName || "AI Engineering Core";
+  const resolvedRole = role || passedVars["{{role}}"] || passedVars.role || "AI Developer";
+  const resolvedAllocatedTokens = allocatedTokens || passedVars["{{allocated_tokens}}"] || passedVars.allocatedTokens || "50M tokens / month";
+  const resolvedBudgetLimit = budgetLimit || passedVars["{{budget_limit}}"] || passedVars.budgetLimit || "$10,000 / month";
+  const resolvedTenantDomain = tenantDomain || passedVars["{{tenant_domain}}"] || (recipientEmail.includes("@") ? recipientEmail.split("@")[1] : "enterprise.ai");
+  const resolvedModels = authorizedModels || passedVars["{{authorized_models}}"] || "Gemini 3.7 Flash, Claude 3.7 Sonnet, GPT-4.5";
+  const resolvedRoutingPriority = routingPriority || passedVars["{{routing_priority}}"] || "Zero-Markup Flat-Rate Subscriptions";
+  const resolvedCustomMessage = customMessage || passedVars["{{custom_message}}"] || `Enterprise notification dispatched for ${resolvedCompanyName}.`;
+  const resolvedTimestamp = new Date().toLocaleString();
+  const resolvedLoginUrl = passedVars["{{login_url}}"] || "https://ais-dev-gcdyq3rgswqtgkxcjbfmqt-4552824319.us-west2.run.app";
+
+  const varDictionary: Record<string, string> = {
+    "{{recipient_name}}": String(resolvedRecipientName),
+    "{{recipient_email}}": String(recipientEmail),
+    "{{company_name}}": String(resolvedCompanyName),
+    "{{team_name}}": String(resolvedTeamName),
+    "{{role}}": String(resolvedRole),
+    "{{allocated_tokens}}": String(resolvedAllocatedTokens),
+    "{{authorized_models}}": String(resolvedModels),
+    "{{budget_limit}}": String(resolvedBudgetLimit),
+    "{{routing_priority}}": String(resolvedRoutingPriority),
+    "{{tenant_domain}}": String(resolvedTenantDomain),
+    "{{custom_message}}": String(resolvedCustomMessage),
+    "{{login_url}}": String(resolvedLoginUrl),
+    "{{timestamp}}": String(resolvedTimestamp),
+    "{{sent_by}}": String(sentBy),
+  };
+
+  for (const [k, v] of Object.entries(passedVars)) {
+    const normKey = k.startsWith("{{") && k.endsWith("}}") ? k : `{{${k}}}`;
+    varDictionary[normKey] = String(v ?? "");
+  }
+
+  // Resolve Subject
+  let emailSubject = subject;
+  if (!emailSubject) {
+    if (matchedTemplate) {
+      emailSubject = matchedTemplate.subject;
+    } else {
+      emailSubject = `🏢 [${resolvedCompanyName}] Notification - ${templateType}`;
+    }
+  }
+  for (const [k, v] of Object.entries(varDictionary)) {
+    emailSubject = emailSubject.replaceAll(k, v);
+  }
+  emailSubject = emailSubject.replace(/\{\{[a-zA-Z0-9_-]+\}\}/g, "").trim();
+
+  // Resolve HTML & Text Content
+  let finalHtml = htmlBody || (matchedTemplate ? matchedTemplate.htmlBody : "");
+  if (!finalHtml) {
+    finalHtml = `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #0f172a; color: #f8fafc; padding: 24px; border-radius: 12px; border: 1px solid #334155;">
+        <h3 style="color: #6366f1; margin-top: 0;">⚡ WhyOr Dispatch AI Enterprise</h3>
+        <p>Notification for <strong>${resolvedRecipientName}</strong> at <strong>${resolvedCompanyName}</strong></p>
+        <p>${resolvedCustomMessage}</p>
+        <div style="background-color: #1e293b; padding: 12px; border-radius: 8px; font-family: monospace; font-size: 12px; margin-top: 16px;">
+          <div>Domain: ${resolvedTenantDomain}</div>
+          <div>Allocated Quota: ${resolvedAllocatedTokens}</div>
+          <div>Models: ${resolvedModels}</div>
+        </div>
+      </div>
+    `;
+  }
+
+  for (const [k, v] of Object.entries(varDictionary)) {
+    finalHtml = finalHtml.replaceAll(k, v);
+  }
+  finalHtml = finalHtml.replace(/\{\{[a-zA-Z0-9_-]+\}\}/g, "");
+
+  let finalPlain = textBody || (matchedTemplate ? matchedTemplate.textBody : "");
+  if (finalPlain) {
+    for (const [k, v] of Object.entries(varDictionary)) {
+      finalPlain = finalPlain.replaceAll(k, v);
+    }
+    finalPlain = finalPlain.replace(/\{\{[a-zA-Z0-9_-]+\}\}/g, "");
+  }
+
+  const isGoogle = activeHost.toLowerCase().includes("gmail") || activeHost.toLowerCase().includes("google");
+  const sendAttempt = async (portToUse: number, secureToUse: boolean) => {
+    const transporter = nodemailer.createTransport({
+      host: activeHost,
+      port: portToUse,
+      secure: secureToUse,
+      auth: { user: activeUser, pass: activePass },
+      tls: { rejectUnauthorized: false },
+      connectionTimeout: 8000,
+      greetingTimeout: 7000,
+      socketTimeout: 8000,
+    } as any);
+
+    return transporter.sendMail({
+      from: `"${activeFromName}" <${activeFromEmail}>`,
+      to: recipientEmail,
+      subject: emailSubject,
+      html: finalHtml,
+      text: finalPlain || `WhyOr Dispatch AI Enterprise notification for ${resolvedCompanyName}`,
+    });
+  };
+
+  const startMs = Date.now();
+  try {
+    let info: any;
+    try {
+      info = await sendAttempt(activePort, activeSecure);
+    } catch (primaryErr: any) {
+      if (isGoogle) {
+        const fallbackPort = activePort === 587 ? 465 : 587;
+        const fallbackSecure = fallbackPort === 465;
+        info = await sendAttempt(fallbackPort, fallbackSecure);
+        activePort = fallbackPort;
+        activeSecure = fallbackSecure;
+      } else {
+        throw primaryErr;
+      }
+    }
+
+    const durationMs = Date.now() - startMs;
+    const newLog = {
+      id: `mail_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      to: recipientEmail,
+      from: `${activeFromName} <${activeFromEmail}>`,
+      subject: emailSubject,
+      emailType: templateType,
+      status: "sent" as const,
+      messageId: info.messageId,
+      sentAt: new Date().toISOString(),
+      sentBy,
+    };
+    emailLogs.unshift(newLog);
+    if (emailLogs.length > 50) emailLogs.pop();
+
+    res.json({
+      success: true,
+      messageId: info.messageId,
+      recipient: recipientEmail,
+      templateType,
+      durationMs,
+      deliveredDirectly: true,
+      log: newLog,
+    });
+  } catch (err: any) {
+    const failedLog = {
+      id: `mail_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      to: recipientEmail,
+      from: `${activeFromName} <${activeFromEmail}>`,
+      subject: emailSubject,
+      emailType: templateType,
+      status: "failed" as const,
+      errorMessage: err.message,
+      sentAt: new Date().toISOString(),
+      sentBy,
+    };
+    emailLogs.unshift(failedLog);
+
+    res.status(400).json({
+      success: false,
+      error: err.message || "Failed to dispatch email",
+      recipient: recipientEmail,
+      recommendation: "Ensure SMTP port, host, and Gmail App Password are valid in Settings.",
+      log: failedLog,
+    });
+  }
+});
+
+// 5d. Batch Email Dispatch API with Throttling
+app.post("/api/email/batch", async (req, res) => {
+  const { notifications = [] } = req.body;
+  if (!Array.isArray(notifications) || notifications.length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: "Array of notifications is required.",
+    });
+  }
+
+  const results: any[] = [];
+  let sentCount = 0;
+  let failedCount = 0;
+
+  for (const notif of notifications) {
+    try {
+      const recipientEmail = (Array.isArray(notif.to) ? notif.to.join(", ") : notif.to || "").trim();
+      const activeUser = smtpSettings.user;
+      const activePass = cleanSmtpPassword(smtpSettings.pass);
+      const activeHost = smtpSettings.host || "smtp.gmail.com";
+      const activePort = Number(smtpSettings.port) || 587;
+      const activeSecure = Boolean(smtpSettings.secure);
+      const activeFromEmail = smtpSettings.fromEmail || activeUser || "solarastra.in@gmail.com";
+      const activeFromName = smtpSettings.fromName || "WhyOr Dispatch AI Enterprise";
+
+      if (!activeUser || !activePass) {
+        results.push({
+          success: false,
+          recipient: recipientEmail,
+          error: "SMTP credentials not configured in settings.",
+        });
+        failedCount++;
+        continue;
+      }
+
+      const transporter = nodemailer.createTransport({
+        host: activeHost,
+        port: activePort,
+        secure: activeSecure,
+        auth: { user: activeUser, pass: activePass },
+        tls: { rejectUnauthorized: false },
+        connectionTimeout: 8000,
+        greetingTimeout: 7000,
+        socketTimeout: 8000,
+      } as any);
+
+      const info = await transporter.sendMail({
+        from: `"${activeFromName}" <${activeFromEmail}>`,
+        to: recipientEmail,
+        subject: notif.subject || `[WhyOr Dispatch] ${notif.templateType || 'Notification'}`,
+        html: notif.htmlBody || `<p>${notif.customMessage || 'Enterprise notification'}</p>`,
+        text: notif.textBody || notif.customMessage,
+      });
+
+      sentCount++;
+      results.push({
+        success: true,
+        recipient: recipientEmail,
+        messageId: info.messageId,
+      });
+
+      // Small throttling delay
+      await new Promise((r) => setTimeout(r, 100));
+    } catch (e: any) {
+      failedCount++;
+      results.push({
+        success: false,
+        recipient: notif.to,
+        error: e.message,
+      });
+    }
+  }
+
+  res.json({
+    success: failedCount === 0,
+    total: notifications.length,
+    sentCount,
+    failedCount,
+    results,
+  });
+});
+
 // 6. Get Email Logs
-app.get("/api/admin/smtp/logs", (req, res) => {
+app.get("/api/admin/smtp/logs", requireManageSmtp, (req, res) => {
   res.json({
     success: true,
     logs: emailLogs,
@@ -3299,7 +3663,7 @@ app.get("/api/admin/smtp/logs", (req, res) => {
 });
 
 // 7. Clear Email Logs
-app.delete("/api/admin/smtp/logs", (req, res) => {
+app.delete("/api/admin/smtp/logs", requireManageSmtp, (req, res) => {
   emailLogs = [];
   res.json({
     success: true,
@@ -5216,7 +5580,18 @@ app.post("/api/admin/users", (req, res) => {
   res.status(201).json(user);
 });
 
+// SECURITY FIX: NO authentication or permission check existed on any of
+// these three endpoints. setBudget in particular is the entire
+// budget-enforcement mechanism's control surface — an unauthenticated
+// caller could set their own (or anyone's) token/cost limit to null
+// (unlimited) or an arbitrarily high value before dispatching, silently
+// defeating the budget check fixed elsewhere in this review. Found
+// while systematically auditing every endpoint for auth coverage.
 app.get("/api/admin/budgets/:scope/:id", (req, res) => {
+  const email = resolveAuthenticatedEmail(req);
+  const permCheck = requireCapability(email, "manage_budgets");
+  if (!permCheck.allowed) return res.status(401).json({ error: permCheck.reason });
+
   const { scope, id } = req.params;
   const budget = checkBudget(
     scope === "user" ? id : "none",
@@ -5225,14 +5600,42 @@ app.get("/api/admin/budgets/:scope/:id", (req, res) => {
   res.json(budget);
 });
 
-app.post("/api/admin/budgets/:scope/:id", (req, res) => {
+app.post("/api/admin/budgets/:scope/:id", async (req, res) => {
+  const email = resolveAuthenticatedEmail(req);
+  const permCheck = requireCapability(email, "manage_budgets");
+  if (!permCheck.allowed) {
+    // Audit even the DENIED attempts — a real signal for "who tried to
+    // change a budget without permission," not just successful changes.
+    const { recordAuditLog } = await import("./src/server/persistence/auditLog");
+    await recordAuditLog({ eventType: "auth_denied", actorEmail: email, targetId: req.params.id, details: { attemptedAction: "set_budget", reason: permCheck.reason } });
+    return res.status(401).json({ error: permCheck.reason });
+  }
+
   const { scope, id } = req.params;
   const { tokenLimit, costLimitUsd } = req.body;
   const b = setBudget(scope as "user" | "team", id, tokenLimit ?? null, costLimitUsd ?? null);
+
+  // Real audit trail example wired into a real endpoint — same pattern
+  // should be extended to credential/SMTP/catalog changes elsewhere in
+  // this file, not just this one route. Deliberately logs only the NEW
+  // values, not a guessed "previous" shape from checkBudget()'s return
+  // type — that type wasn't independently confirmed against this repo's
+  // actual budgetEnforcement.ts, and logging a field that doesn't really
+  // exist there would be worse than logging less.
+  const { recordAuditLog } = await import("./src/server/persistence/auditLog");
+  await recordAuditLog({
+    eventType: "budget_changed", actorEmail: email, targetId: id,
+    details: { scope, newTokenLimit: tokenLimit ?? null, newCostLimitUsd: costLimitUsd ?? null },
+  });
+
   res.json(b);
 });
 
 app.post("/api/admin/budgets/:scope/:id/reset", (req, res) => {
+  const email = resolveAuthenticatedEmail(req);
+  const permCheck = requireCapability(email, "manage_budgets");
+  if (!permCheck.allowed) return res.status(401).json({ error: permCheck.reason });
+
   const { scope, id } = req.params;
   const b = resetBudgetPeriod(scope as "user" | "team", id);
   res.json(b);
@@ -5352,6 +5755,30 @@ app.post("/api/company/:companyId/settings/platform-assistant/reset-to-portal-de
 app.delete("/api/admin/assistant/company/:companyId", (req, res) => {
   clearCompanyAssistantOverride(req.params.companyId);
   res.json({ success: true, message: "Company override removed, reverting to portal default." });
+});
+
+// ==================== ADMIN AUDIT TRAIL ====================
+// Backend for the requested "Admin Audit Trail" tab — real Firestore-
+// backed logs, super_admin only (matches firestore.rules' audit_logs
+// collection: client write is denied by rule; this server-side read
+// uses the Admin SDK). Includes duplicate-event detection so a super
+// admin can see WHY the same action fired repeatedly, not just that it
+// did.
+app.get("/api/admin/audit-logs", async (req, res) => {
+  const email = resolveAuthenticatedEmail(req);
+  const permCheck = requireCapability(email, "view_platform_console");
+  if (!permCheck.allowed) return res.status(401).json({ error: permCheck.reason });
+
+  const { eventType, actorEmail, limit, before } = req.query as Record<string, string>;
+  const { listAuditLogs, detectDuplicateSignals } = await import("./src/server/persistence/auditLog");
+
+  const logs = await listAuditLogs({
+    eventType: eventType as any, actorEmail, before,
+    limit: limit ? Number(limit) : undefined,
+  });
+  const duplicateSignals = detectDuplicateSignals(logs);
+
+  res.json({ logs, duplicateSignals });
 });
 
 // Register BusinessException and error handler

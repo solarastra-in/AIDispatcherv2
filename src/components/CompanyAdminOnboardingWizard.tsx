@@ -52,6 +52,11 @@ import {
 } from '../lib/firebase';
 import { UserPersona, AIProvider, ModelTier } from '../types';
 import { resolveApiUrl } from '../lib/firebaseClient';
+import { 
+  sendCompanyWelcomeNotification, 
+  sendEmployeeSetupGuideNotification, 
+  sendEmailNotification 
+} from '../services/emailNotificationService';
 
 interface CompanyAdminOnboardingWizardProps {
   isOpen: boolean;
@@ -163,6 +168,14 @@ export const CompanyAdminOnboardingWizard: React.FC<CompanyAdminOnboardingWizard
   const [employeeEmailDispatchStatus, setEmployeeEmailDispatchStatus] = useState<{
     sent: boolean;
     count?: number;
+    message?: string;
+    error?: string;
+    timestamp?: string;
+  } | null>(null);
+  const [finalEmailConfirmationStatus, setFinalEmailConfirmationStatus] = useState<{
+    sent: boolean;
+    recipient?: string;
+    messageId?: string;
     message?: string;
     error?: string;
     timestamp?: string;
@@ -284,52 +297,89 @@ export const CompanyAdminOnboardingWizard: React.FC<CompanyAdminOnboardingWizard
   const handleSendEmployeeNotificationEmails = async () => {
     setIsSendingEmployeeEmails(true);
     try {
-      const targetEmails = onboardedMembers.map(m => m.email);
-      const res = await fetch(resolveApiUrl('/api/admin/smtp/send-welcome'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          to: companyAdminEmail,
-          recipientName: `${companyName} Employee Distribution`,
-          companyName,
-          companyAdminName,
-          companyAdminEmail,
+      if (onboardedMembers.length > 0) {
+        const dummyCompany: CompanyFirestore = {
+          id: companyId,
+          name: companyName,
           domain: companyDomain,
-          totalEmployees: onboardedMembers.length,
-          contactEmail: companyContactEmail,
-          contactPhone: companyContactPhone,
-          allowedModelsCount: allowedModels.length,
-          monthlyQuotaM: (monthlyTokenQuota / 1_000_000).toFixed(0),
+          monthlyTokenQuota,
+          monthlyTokensUsed: 0,
+          allowedModels,
+          routingPriority,
+          status: 'active',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+
+        const batchRes = await sendEmployeeSetupGuideNotification({
+          employees: onboardedMembers.map((m) => ({
+            name: m.name,
+            email: m.email,
+            role: m.role,
+            teamName: `${companyName} AI Engineering`,
+            tierCap: m.tierCap,
+            monthlyTokenQuota: m.monthlyTokenQuota,
+          })),
+          company: dummyCompany,
           customMessage: customEmployeeWelcome,
-        }),
-      });
-
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data.success) {
-        setEmployeeEmailDispatchStatus({
-          sent: true,
-          count: onboardedMembers.length,
-          message: `Setup instructions dispatched successfully to ${onboardedMembers.length} company employees via SMTP gateway (Message-ID: ${data.messageId || 'sent'}).`,
-          timestamp: new Date().toLocaleTimeString(),
-        });
-
-        // Log email event to Firestore
-        logEmailToFirestore({
-          to: targetEmails.join(', '),
-          from: companyAdminEmail,
-          subject: `🏢 [${companyName}] Action Required: Setup Your Enterprise AI Workspace`,
-          emailType: 'company_employee_setup_guide',
-          status: 'sent',
           sentBy: companyAdminEmail,
-        }).catch(err => console.warn('Email log notice:', err));
-      } else {
-        const errorDetail = data.error || data.recommendation || 'SMTP dispatch error. Please verify SMTP username and password/App Password in server settings.';
-        setEmployeeEmailDispatchStatus({
-          sent: false,
-          error: errorDetail,
-          message: `Email dispatch notice: ${errorDetail}`,
-          timestamp: new Date().toLocaleTimeString(),
         });
+
+        if (batchRes.sentCount > 0) {
+          setEmployeeEmailDispatchStatus({
+            sent: true,
+            count: batchRes.sentCount,
+            message: `Setup instructions dispatched successfully to ${batchRes.sentCount} of ${batchRes.total} company employees via centralized email service.`,
+            timestamp: new Date().toLocaleTimeString(),
+          });
+        } else {
+          const firstError = batchRes.results.find((r) => !r.success)?.error || 'Email dispatch failed. Please verify SMTP server configuration.';
+          setEmployeeEmailDispatchStatus({
+            sent: false,
+            error: firstError,
+            message: `Email dispatch notice: ${firstError}`,
+            timestamp: new Date().toLocaleTimeString(),
+          });
+        }
+      } else {
+        // Send single preview guide to Company Admin
+        const singleResult = await sendEmailNotification({
+          to: companyAdminEmail,
+          subject: `🏢 [${companyName}] Employee AI Setup & Workspace Guide`,
+          templateType: 'company_welcome_guide',
+          recipientName: companyAdminName,
+          companyName,
+          tenantDomain: companyDomain,
+          allocatedTokens: `${(monthlyTokenQuota / 1_000_000).toFixed(0)}M tokens/mo`,
+          authorizedModels: allowedModels.join(', '),
+          customMessage: customEmployeeWelcome || `Enterprise AI setup walkthrough for ${companyName}.`,
+          variables: {
+            '{{recipient_name}}': companyAdminName,
+            '{{company_name}}': companyName,
+            '{{tenant_domain}}': companyDomain,
+            '{{allocated_tokens}}': `${(monthlyTokenQuota / 1_000_000).toFixed(0)}M tokens/mo`,
+            '{{authorized_models}}': allowedModels.join(', '),
+            '{{custom_message}}': customEmployeeWelcome,
+            '{{login_url}}': 'https://ais-dev-gcdyq3rgswqtgkxcjbfmqt-4552824319.us-west2.run.app',
+          },
+          sentBy: companyAdminEmail,
+        });
+
+        if (singleResult.success) {
+          setEmployeeEmailDispatchStatus({
+            sent: true,
+            count: 1,
+            message: `Setup guide preview dispatched successfully to ${companyAdminEmail} (Message-ID: ${singleResult.messageId || 'sent'}).`,
+            timestamp: new Date().toLocaleTimeString(),
+          });
+        } else {
+          setEmployeeEmailDispatchStatus({
+            sent: false,
+            error: singleResult.error,
+            message: `Email dispatch notice: ${singleResult.error}`,
+            timestamp: new Date().toLocaleTimeString(),
+          });
+        }
       }
     } catch (err: any) {
       setEmployeeEmailDispatchStatus({
@@ -444,12 +494,50 @@ export const CompanyAdminOnboardingWizard: React.FC<CompanyAdminOnboardingWizard
 
       await saveTeamToFirestore(teamPayload);
 
+      // Trigger Centralized Welcome Email Alert to Company Admin & SuperAdmin
+      try {
+        const welcomeEmailRes = await sendCompanyWelcomeNotification({
+          company: companyPayload,
+          adminUser: companyPayload.companyAdmins[0],
+          customMessage: customEmployeeWelcome || `Enterprise Workspace for ${companyName} (${companyDomain}) has been launched with delegated Corporate Admin authority.`,
+          sentBy: superAdminEmail || 'solarastra.in@gmail.com',
+          notifySuperAdmin: true,
+        });
+
+        if (welcomeEmailRes.success) {
+          setFinalEmailConfirmationStatus({
+            sent: true,
+            recipient: companyAdminEmail,
+            messageId: welcomeEmailRes.messageId,
+            message: `Official provisioning credentials and welcome alert delivered to ${companyAdminEmail}.`,
+            timestamp: new Date().toLocaleTimeString(),
+          });
+        } else {
+          setFinalEmailConfirmationStatus({
+            sent: false,
+            recipient: companyAdminEmail,
+            error: welcomeEmailRes.error,
+            message: `Email alert notification notice: ${welcomeEmailRes.error || 'SMTP delivery logged in audit trail.'}`,
+            timestamp: new Date().toLocaleTimeString(),
+          });
+        }
+      } catch (emailErr: any) {
+        console.warn('Welcome email alert notice:', emailErr);
+        setFinalEmailConfirmationStatus({
+          sent: false,
+          recipient: companyAdminEmail,
+          error: emailErr.message,
+          message: `Email notification deferred: ${emailErr.message}`,
+          timestamp: new Date().toLocaleTimeString(),
+        });
+      }
+
       // Record Audit Log in Firestore
       await recordAuditLogToFirestore(
         'COMPANY_ADMIN_ONBOARDING_COMPLETED',
         'companies',
         companyAdminEmail,
-        `Company Admin ${companyAdminName} completed 7-step onboarding for ${companyName} (${companyId}). Onboarded ${onboardedMembers.length} employees.`
+        `Company Admin ${companyAdminName} completed 7-step onboarding for ${companyName} (${companyId}). Onboarded ${onboardedMembers.length} employees. Welcome email alert triggered.`
       );
 
       setIsCompleted(true);
@@ -1372,6 +1460,22 @@ export const CompanyAdminOnboardingWizard: React.FC<CompanyAdminOnboardingWizard
                       <span className="text-slate-400">Monthly Allocations:</span>
                       <span className="text-emerald-400 font-mono">{(monthlyTokenQuota / 1_000_000).toFixed(0)}M tokens / ${monthlyBudgetUsd} cap</span>
                     </div>
+
+                    {finalEmailConfirmationStatus && (
+                      <div className={`mt-2 pt-2 border-t border-white/10 flex items-center justify-between text-[11px] ${
+                        finalEmailConfirmationStatus.sent ? 'text-emerald-400' : 'text-amber-400'
+                      }`}>
+                        <span className="flex items-center gap-1">
+                          <Mail className="w-3.5 h-3.5" />
+                          <span>Welcome Alert:</span>
+                        </span>
+                        <span className="font-mono">
+                          {finalEmailConfirmationStatus.sent 
+                            ? `Dispatched to ${finalEmailConfirmationStatus.recipient || companyAdminEmail}`
+                            : (finalEmailConfirmationStatus.message || 'Audit Log Saved')}
+                        </span>
+                      </div>
+                    )}
                   </div>
 
                   <div className="pt-3 flex items-center justify-center gap-3">

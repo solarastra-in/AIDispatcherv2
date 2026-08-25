@@ -60,6 +60,11 @@ import {
 } from '../lib/firebase';
 import { CompanyAdminUser, CorporateAdminPrivileges } from '../types';
 import { resolveApiUrl } from '../lib/firebaseClient';
+import { 
+  sendCompanyWelcomeNotification, 
+  sendCorporateAdminCredentialsNotification, 
+  sendBatchEmailNotifications 
+} from '../services/emailNotificationService';
 import { User } from 'firebase/auth';
 
 const AVAILABLE_MODELS = [

@@ -23,6 +23,7 @@ import {
   Users
 } from 'lucide-react';
 import { saveContactInquiryToFirestore, ContactInquiry } from '../lib/firebase';
+import { usePageSEO } from '../lib/seo';
 
 interface ContactPageProps {
   onNavigateTab?: (tab: string) => void;
@@ -48,6 +49,11 @@ const ENTERPRISE_FAQS = [
 ];
 
 export const ContactPage: React.FC<ContactPageProps> = ({ onNavigateTab }) => {
+  usePageSEO({
+    tabKey: 'contact',
+    path: '/contact',
+  });
+
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [company, setCompany] = useState('');

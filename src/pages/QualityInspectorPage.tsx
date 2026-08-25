@@ -30,6 +30,7 @@ import { TASK_ARCHETYPES, TaskArchetypeId } from '../core/taskTaxonomy';
 import { QualityModelTracker, BetaDistribution } from '../core/qualityModel';
 import { FeedbackEngine, FEEDBACK_SIGNALS, FeedbackSignalType } from '../core/feedbackEngine';
 import { AIModel, UserPersona } from '../types';
+import { usePageSEO } from '../lib/seo';
 
 interface QualityInspectorPageProps {
   qualityTracker: QualityModelTracker;
@@ -50,6 +51,11 @@ export const QualityInspectorPage: React.FC<QualityInspectorPageProps> = ({
   onSelectModelForDispatch,
   onOpenAuthGate,
 }) => {
+  usePageSEO({
+    tabKey: 'quality',
+    path: '/quality',
+  });
+
   const [selectedArchetype, setSelectedArchetype] = useState<TaskArchetypeId>('multi_step_reasoning');
   const [qualityThreshold, setQualityThreshold] = useState<number>(0.75);
   const [activeModelId, setActiveModelId] = useState<string>(models[0]?.id || 'claude-3-7-sonnet');
