@@ -24,7 +24,8 @@ import {
   KeyRound,
   Lock,
   PauseCircle,
-  PlayCircle
+  PlayCircle,
+  Sparkles
 } from 'lucide-react';
 import { 
   CompanyFirestore, 
@@ -62,6 +63,23 @@ export const AdminCustomersPortal: React.FC<AdminCustomersPortalProps> = ({
 
   // Quick Action Email Dispatch
   const [isSendingAlert, setIsSendingAlert] = useState<boolean>(false);
+
+  // Custom in-app confirmation modal state (replaces window.confirm for iframe sandbox compatibility)
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    description: string;
+    confirmText: string;
+    isDestructive?: boolean;
+    onConfirm: () => Promise<void> | void;
+  }>({
+    isOpen: false,
+    title: '',
+    description: '',
+    confirmText: 'Confirm',
+    isDestructive: false,
+    onConfirm: () => {}
+  });
 
   const fetchCloudData = async () => {
     setIsLoading(true);
@@ -104,55 +122,153 @@ export const AdminCustomersPortal: React.FC<AdminCustomersPortalProps> = ({
   const totalMonthlyTokensConsumed = companies.reduce((acc, c) => acc + (c.monthlyTokensUsed || 0), 0);
   const totalMonthlyBudget = companies.reduce((acc, c) => acc + (c.monthlyBudgetUsd || 0), 0);
 
-  // Toggle company status (Active / Suspended)
-  const handleToggleStatus = async (company: CompanyFirestore) => {
+  // Toggle company status (Active / Suspended) with Optimistic UI & Rollback
+  const handleToggleStatus = (company: CompanyFirestore) => {
     const newStatus = company.status === 'active' ? 'suspended' : 'active';
-    const actionLabel = newStatus === 'active' ? 'Re-activated' : 'Suspended';
-    
-    if (!confirm(`Are you sure you want to ${actionLabel.toLowerCase()} account access for '${company.name}'?`)) {
+    const actionLabel = newStatus === 'active' ? 'Re-activate' : 'Suspend';
+
+    setConfirmDialog({
+      isOpen: true,
+      title: `${actionLabel} Tenant Account`,
+      description: `Are you sure you want to ${actionLabel.toLowerCase()} account access for '${company.name}' (${company.domain})?`,
+      confirmText: `${actionLabel} Account`,
+      isDestructive: newStatus === 'suspended',
+      onConfirm: async () => {
+        const previousCompanies = [...companies];
+        const updated: CompanyFirestore = {
+          ...company,
+          status: newStatus,
+          updatedAt: new Date().toISOString()
+        };
+
+        // Optimistic update
+        setCompanies(prev => prev.map(c => c.id === company.id ? updated : c));
+
+        try {
+          await saveCompanyToFirestore(updated);
+          
+          const adminEmail = auth.currentUser?.email || 'Admin Superuser';
+          await recordAuditLogToFirestore(
+            `${actionLabel}d Tenant Account`,
+            'customer_management',
+            adminEmail,
+            `Changed tenant status of '${company.name}' (${company.id}) to ${newStatus}.`
+          );
+
+          setNotification({
+            type: 'success',
+            text: `Company '${company.name}' status updated to ${newStatus.toUpperCase()}.`
+          });
+        } catch (err: any) {
+          setCompanies(previousCompanies);
+          setNotification({ type: 'error', text: `Failed to update status: ${err.message}. Rolled back.` });
+        }
+      }
+    });
+  };
+
+  // Delete company tenant permanently with Optimistic UI & Rollback
+  const handleDeleteCompany = (company: CompanyFirestore) => {
+    setConfirmDialog({
+      isOpen: true,
+      title: `Delete Customer Tenant`,
+      description: `Are you sure you want to permanently delete customer '${company.name}' (${company.id})? This will remove all registry and quota data from the Firestore database.`,
+      confirmText: `Delete Customer`,
+      isDestructive: true,
+      onConfirm: async () => {
+        const previousCompanies = [...companies];
+
+        // Optimistically remove from UI
+        setCompanies(prev => prev.filter(c => c.id !== company.id));
+
+        try {
+          fetch(`/api/admin/companies/${company.id}`, { method: 'DELETE' }).catch(() => {});
+          await deleteCompanyFromFirestore(company.id);
+
+          const adminEmail = auth.currentUser?.email || 'Admin Superuser';
+          await recordAuditLogToFirestore(
+            'Deleted Tenant Customer',
+            'customer_management',
+            adminEmail,
+            `Deleted customer '${company.name}' (${company.id}) from Firestore database.`
+          );
+
+          setNotification({
+            type: 'success',
+            text: `Deleted customer '${company.name}' successfully.`
+          });
+        } catch (err: any) {
+          setCompanies(previousCompanies);
+          setNotification({ type: 'error', text: `Failed to delete customer: ${err.message}. Restored customer.` });
+        }
+      }
+    });
+  };
+
+  // Deduplicate redundant customer records with Optimistic UI & Rollback
+  const handleDeduplicateCompanies = async () => {
+    const seen = new Map<string, CompanyFirestore>();
+    const duplicatesToDelete: CompanyFirestore[] = [];
+
+    // Prioritize companies with more teams or more recent data
+    for (const c of companies) {
+      const key = `${c.name.trim().toLowerCase()}::${c.domain.trim().toLowerCase()}`;
+      if (!seen.has(key)) {
+        seen.set(key, c);
+      } else {
+        const existing = seen.get(key)!;
+        const existingTeamsCount = teams.filter(t => t.companyId === existing.id).length;
+        const currentTeamsCount = teams.filter(t => t.companyId === c.id).length;
+        if (currentTeamsCount > existingTeamsCount) {
+          duplicatesToDelete.push(existing);
+          seen.set(key, c);
+        } else {
+          duplicatesToDelete.push(c);
+        }
+      }
+    }
+
+    if (duplicatesToDelete.length === 0) {
+      setNotification({ type: 'info', text: 'All customer accounts are unique. No duplicate profiles found.' });
       return;
     }
 
-    const updated: CompanyFirestore = {
-      ...company,
-      status: newStatus,
-      updatedAt: new Date().toISOString()
-    };
+    const previousCompanies = [...companies];
+    // Optimistic UI deduplication
+    setCompanies(Array.from(seen.values()));
 
     try {
-      await saveCompanyToFirestore(updated);
-      setCompanies(prev => prev.map(c => c.id === company.id ? updated : c));
-      
-      const adminEmail = auth.currentUser?.email || 'Admin Superuser';
-      await recordAuditLogToFirestore(
-        `${actionLabel} Tenant Account`,
-        'customer_management',
-        adminEmail,
-        `Changed tenant status of '${company.name}' (${company.id}) to ${newStatus}.`
-      );
-
+      for (const dup of duplicatesToDelete) {
+        await deleteCompanyFromFirestore(dup.id);
+        fetch(`/api/admin/companies/${dup.id}`, { method: 'DELETE' }).catch(() => {});
+      }
       setNotification({
         type: 'success',
-        text: `Company '${company.name}' status updated to ${newStatus.toUpperCase()}.`
+        text: `Cleaned up ${duplicatesToDelete.length} duplicate customer record(s) from database.`
       });
     } catch (err: any) {
-      setNotification({ type: 'error', text: `Failed to update status: ${err.message}` });
+      setCompanies(previousCompanies);
+      setNotification({ type: 'error', text: `Error during deduplication: ${err.message}. Rolled back.` });
     }
   };
 
-  // Save quick edits to Quota & Budget
+  // Save quick edits to Quota & Budget with Optimistic UI & Rollback
   const handleSaveCompanyEdits = async () => {
     if (!editingCompany) return;
     setIsSavingEdit(true);
 
-    try {
-      const updated: CompanyFirestore = {
-        ...editingCompany,
-        updatedAt: new Date().toISOString()
-      };
+    const previousCompanies = [...companies];
+    const updated: CompanyFirestore = {
+      ...editingCompany,
+      updatedAt: new Date().toISOString()
+    };
 
-      await saveCompanyToFirestore(updated);
-      setCompanies(prev => prev.map(c => c.id === updated.id ? updated : c));
+    // Optimistically apply edits to UI
+    setCompanies(prev => prev.map(c => c.id === updated.id ? updated : c));
+    setEditingCompany(null);
+
+    try {
+      await saveCompanyToFirestore(updated, { checkDuplicates: true });
 
       const adminEmail = auth.currentUser?.email || 'Admin Superuser';
       await recordAuditLogToFirestore(
@@ -166,9 +282,14 @@ export const AdminCustomersPortal: React.FC<AdminCustomersPortalProps> = ({
         type: 'success',
         text: `Updated configurations for '${updated.name}' successfully.`
       });
-      setEditingCompany(null);
     } catch (err: any) {
-      setNotification({ type: 'error', text: `Failed to save changes: ${err.message}` });
+      // Rollback
+      setCompanies(previousCompanies);
+      const isDup = err?.message?.includes('DUPLICATE');
+      setNotification({
+        type: 'error',
+        text: isDup ? `Duplicate Conflict: ${err.message}. Rolled back edits.` : `Failed to save changes: ${err.message}. Rolled back edits.`
+      });
     } finally {
       setIsSavingEdit(false);
     }
@@ -384,7 +505,16 @@ export const AdminCustomersPortal: React.FC<AdminCustomersPortalProps> = ({
           />
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={handleDeduplicateCompanies}
+            title="Scan for duplicate customer entries and remove redundant profiles"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-white/10 text-xs font-mono transition-all cursor-pointer"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+            <span>Clean Duplicates</span>
+          </button>
+
           <select
             value={tierFilter}
             onChange={(e) => setTierFilter(e.target.value)}
@@ -599,6 +729,14 @@ export const AdminCustomersPortal: React.FC<AdminCustomersPortalProps> = ({
                           >
                             <ChevronRight className="w-3.5 h-3.5" />
                           </button>
+
+                          <button
+                            onClick={() => handleDeleteCompany(company)}
+                            title="Delete Customer Account"
+                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-600 text-slate-400 hover:text-white transition-colors cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -609,6 +747,54 @@ export const AdminCustomersPortal: React.FC<AdminCustomersPortalProps> = ({
           </table>
         </div>
       </div>
+
+      {/* CUSTOM IN-APP CONFIRMATION MODAL (SANDBOX SAFE) */}
+      {confirmDialog.isOpen && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-slate-900 border border-white/20 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center gap-3">
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                confirmDialog.isDestructive ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30'
+              }`}>
+                {confirmDialog.isDestructive ? <AlertTriangle className="w-5 h-5" /> : <Building2 className="w-5 h-5" />}
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">{confirmDialog.title}</h3>
+                <p className="text-xs text-slate-400">Action requires authorization confirmation</p>
+              </div>
+            </div>
+
+            <p className="text-sm text-slate-300 leading-relaxed bg-slate-950/60 p-3.5 rounded-xl border border-white/5 font-mono">
+              {confirmDialog.description}
+            </p>
+
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-white/10">
+              <button
+                type="button"
+                onClick={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const fn = confirmDialog.onConfirm;
+                  setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+                  await fn();
+                }}
+                className={`px-4 py-2 rounded-xl text-xs font-bold shadow-lg transition-all cursor-pointer ${
+                  confirmDialog.isDestructive
+                    ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-rose-600/30'
+                    : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-600/30'
+                }`}
+              >
+                {confirmDialog.confirmText}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* QUICK EDIT MODAL */}
       {editingCompany && (

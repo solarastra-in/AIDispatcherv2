@@ -1,6 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { TeamAccount, TeamMember, ModelTier, UserPersona } from '../types';
 import { INITIAL_TEAM_ACCOUNT } from '../data/mockData';
+import { 
+  saveTeamToFirestore, 
+  loadTeamsFromFirestore, 
+  recordAuditLogToFirestore 
+} from '../lib/firebase';
 import { 
   Users, 
   UserPlus, 
@@ -39,6 +44,49 @@ export const TeamGovernance: React.FC<TeamGovernanceProps> = ({
   const [showBudgetModal, setShowBudgetModal] = useState<boolean>(false);
   const [editingMember, setEditingMember] = useState<TeamMember | null>(null);
 
+  // Load team from Firestore on mount
+  useEffect(() => {
+    async function fetchTeamData() {
+      try {
+        const teams = await loadTeamsFromFirestore(activePersona.companyId || 'comp_enterprise');
+        if (teams && teams.length > 0) {
+          const matched = teams.find(t => t.id === (activePersona.teamId || 'team_enterprise')) || teams[0];
+          setTeam({
+            id: matched.id,
+            companyId: matched.companyId || 'comp_enterprise',
+            name: matched.name,
+            tierPlan: 'Enterprise',
+            adminEmail: matched.leadEmail || 'solarastra.in@gmail.com',
+            companyAdminEmail: 'solarastra.in@gmail.com',
+            ssoDomain: 'company.com',
+            ssoEnabled: true,
+            allowedProviders: ['google', 'openai', 'anthropic', 'mistral', 'deepseek', 'groq'],
+            allowedModels: matched.allowedModels || ['gemini-3.7-flash', 'gemini-3.1-pro-preview', 'gpt-4o', 'claude-3-7-sonnet', 'deepseek-r1', 'groq-llama-3.3-70b'],
+            defaultTierCap: (matched.tierCap as ModelTier) || 'high',
+            monthlyBudgetUsd: matched.monthlyBudgetUsd || 2500,
+            currentMonthSpendUsd: 0,
+            monthlyTokenQuota: matched.monthlyTokenQuota || 100000000,
+            totalTokensProcessed: matched.monthlyTokensUsed || 0,
+            members: (matched.members || []).map(m => ({
+              id: m.id,
+              name: m.name,
+              email: m.email,
+              role: (m.role === 'admin' || m.role === 'viewer' ? m.role : 'member') as 'admin' | 'member' | 'viewer',
+              tierCap: (m.tierCap as ModelTier) || 'high',
+              monthlyTokenQuota: m.monthlyTokenQuota || 20000000,
+              monthlyTokensUsed: m.monthlyTokensUsed || 0,
+              joinedAt: m.joinedAt || new Date().toISOString().split('T')[0],
+              status: (m.status === 'suspended' ? 'suspended' : 'active') as 'active' | 'suspended',
+            })),
+          });
+        }
+      } catch (err) {
+        console.warn('Notice: Could not fetch teams from Firestore, using initial state:', err);
+      }
+    }
+    fetchTeamData();
+  }, [activePersona.companyId, activePersona.teamId]);
+
   // Invite state
   const [inviteName, setInviteName] = useState('');
   const [inviteEmail, setInviteEmail] = useState('');
@@ -53,7 +101,7 @@ export const TeamGovernance: React.FC<TeamGovernanceProps> = ({
   // Edit Quota state
   const [editQuotaVal, setEditQuotaVal] = useState<number>(20_000_000);
 
-  const handleInviteSubmit = (e: React.FormEvent) => {
+  const handleInviteSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!inviteName.trim() || !inviteEmail.trim()) return;
 
@@ -69,13 +117,51 @@ export const TeamGovernance: React.FC<TeamGovernanceProps> = ({
       status: 'active',
     };
 
+    const updatedMembers = [...team.members, newMember];
     setTeam((prev) => ({
       ...prev,
-      members: [...prev.members, newMember],
+      members: updatedMembers,
     }));
 
     if (onAddMember) {
       onAddMember(newMember);
+    }
+
+    // Persist to Firestore
+    try {
+      await saveTeamToFirestore({
+        id: team.id || 'team_enterprise',
+        name: team.name,
+        companyId: team.companyId || 'comp_enterprise',
+        companyName: team.name,
+        leadEmail: team.adminEmail || 'solarastra.in@gmail.com',
+        tierCap: team.defaultTierCap,
+        monthlyBudgetUsd: team.monthlyBudgetUsd,
+        monthlyTokenQuota: team.monthlyTokenQuota,
+        monthlyTokensUsed: 0,
+        allowedModels: team.allowedModels,
+        members: updatedMembers.map(m => ({
+          id: m.id,
+          name: m.name,
+          email: m.email,
+          role: m.role,
+          tierCap: m.tierCap,
+          monthlyTokenQuota: m.monthlyTokenQuota,
+          monthlyTokensUsed: m.monthlyTokensUsed,
+          joinedAt: m.joinedAt,
+          status: m.status,
+        })),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      await recordAuditLogToFirestore(
+        'TEAM_MEMBER_INVITED',
+        'teams',
+        activePersona.email,
+        `Invited ${newMember.name} (${newMember.email}) with role ${newMember.role} and tier cap ${newMember.tierCap}`
+      );
+    } catch (err) {
+      console.warn('Failed to sync new team member to Firestore:', err);
     }
 
     setShowInviteModal(false);
@@ -83,40 +169,141 @@ export const TeamGovernance: React.FC<TeamGovernanceProps> = ({
     setInviteEmail('');
   };
 
-  const handleUpdateMemberTier = (memberId: string, newTierCap: ModelTier) => {
+  const handleUpdateMemberTier = async (memberId: string, newTierCap: ModelTier) => {
+    const updatedMembers = team.members.map((m) =>
+      m.id === memberId ? { ...m, tierCap: newTierCap } : m
+    );
     setTeam((prev) => ({
       ...prev,
-      members: prev.members.map((m) =>
-        m.id === memberId ? { ...m, tierCap: newTierCap } : m
-      ),
+      members: updatedMembers,
     }));
     if (onUpdateMemberTierCap) {
       onUpdateMemberTierCap(memberId, newTierCap);
     }
+
+    // Persist to Firestore
+    try {
+      await saveTeamToFirestore({
+        id: team.id || 'team_enterprise',
+        name: team.name,
+        companyId: team.companyId || 'comp_enterprise',
+        companyName: team.name,
+        leadEmail: team.adminEmail || 'solarastra.in@gmail.com',
+        tierCap: team.defaultTierCap,
+        monthlyBudgetUsd: team.monthlyBudgetUsd,
+        monthlyTokenQuota: team.monthlyTokenQuota,
+        monthlyTokensUsed: 0,
+        allowedModels: team.allowedModels,
+        members: updatedMembers.map(m => ({
+          id: m.id,
+          name: m.name,
+          email: m.email,
+          role: m.role,
+          tierCap: m.tierCap,
+          monthlyTokenQuota: m.monthlyTokenQuota,
+          monthlyTokensUsed: m.monthlyTokensUsed,
+          joinedAt: m.joinedAt,
+          status: m.status,
+        })),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.warn('Failed to sync tier update to Firestore:', err);
+    }
   };
 
-  const handleSaveQuota = (e: React.FormEvent) => {
+  const handleSaveQuota = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingMember) return;
 
+    const updatedMembers = team.members.map((m) =>
+      m.id === editingMember.id
+        ? { ...m, monthlyTokenQuota: Number(editQuotaVal) }
+        : m
+    );
     setTeam((prev) => ({
       ...prev,
-      members: prev.members.map((m) =>
-        m.id === editingMember.id
-          ? { ...m, monthlyTokenQuota: Number(editQuotaVal) }
-          : m
-      ),
+      members: updatedMembers,
     }));
+
+    try {
+      await saveTeamToFirestore({
+        id: team.id || 'team_enterprise',
+        name: team.name,
+        companyId: team.companyId || 'comp_enterprise',
+        companyName: team.name,
+        leadEmail: team.adminEmail || 'solarastra.in@gmail.com',
+        tierCap: team.defaultTierCap,
+        monthlyBudgetUsd: team.monthlyBudgetUsd,
+        monthlyTokenQuota: team.monthlyTokenQuota,
+        monthlyTokensUsed: 0,
+        allowedModels: team.allowedModels,
+        members: updatedMembers.map(m => ({
+          id: m.id,
+          name: m.name,
+          email: m.email,
+          role: m.role,
+          tierCap: m.tierCap,
+          monthlyTokenQuota: m.monthlyTokenQuota,
+          monthlyTokensUsed: m.monthlyTokensUsed,
+          joinedAt: m.joinedAt,
+          status: m.status,
+        })),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.warn('Failed to sync quota update to Firestore:', err);
+    }
+
     setEditingMember(null);
   };
 
-  const handleSaveBudget = (e: React.FormEvent) => {
+  const handleSaveBudget = async (e: React.FormEvent) => {
     e.preventDefault();
     setTeam((prev) => ({
       ...prev,
       monthlyBudgetUsd: deptBudget,
     }));
     setDeptBudgetSaved(true);
+
+    try {
+      await saveTeamToFirestore({
+        id: team.id || 'team_enterprise',
+        name: team.name,
+        companyId: team.companyId || 'comp_enterprise',
+        companyName: team.name,
+        leadEmail: team.adminEmail || 'solarastra.in@gmail.com',
+        tierCap: team.defaultTierCap,
+        monthlyBudgetUsd: deptBudget,
+        monthlyTokenQuota: team.monthlyTokenQuota,
+        monthlyTokensUsed: 0,
+        allowedModels: team.allowedModels,
+        members: team.members.map(m => ({
+          id: m.id,
+          name: m.name,
+          email: m.email,
+          role: m.role,
+          tierCap: m.tierCap,
+          monthlyTokenQuota: m.monthlyTokenQuota,
+          monthlyTokensUsed: m.monthlyTokensUsed,
+          joinedAt: m.joinedAt,
+          status: m.status,
+        })),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      await recordAuditLogToFirestore(
+        'TEAM_BUDGET_UPDATED',
+        'teams',
+        activePersona.email,
+        `Updated department budget to $${deptBudget} USD`
+      );
+    } catch (err) {
+      console.warn('Failed to sync budget to Firestore:', err);
+    }
+
     setTimeout(() => {
       setDeptBudgetSaved(false);
       setShowBudgetModal(false);

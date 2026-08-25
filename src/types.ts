@@ -15,7 +15,7 @@ export type AIProvider =
   | 'tools'
   | 'custom';
 
-export type UserRole = 'guest' | 'user' | 'team_member' | 'team_admin' | 'platform_admin';
+export type UserRole = 'guest' | 'user' | 'team_member' | 'team_admin' | 'corporate_admin' | 'platform_admin';
 
 export interface ModelCapability {
   code: boolean;
@@ -216,6 +216,49 @@ export interface ExcludedModelReason {
   reason: string;
 }
 
+export interface CorporateAdminPrivileges {
+  // Team Creation & Hierarchy Controls
+  canCreateTeams: boolean;
+  maxTeamsAllowed?: number; // e.g. 5, 10, or undefined for unlimited
+  canAssignTeamLeads?: boolean;
+  canDeleteTeams?: boolean;
+  canSetTeamBudgets?: boolean;
+  allowedTeamTiers?: ('low' | 'mid' | 'high' | 'frontier' | 'deep_reasoning')[];
+
+  // BYOK Management Controls
+  canManageBYOK: boolean;
+  canAddProviderKeys?: boolean;
+  canDeleteProviderKeys?: boolean;
+  canToggleSubscriptionFallback?: boolean;
+  canEnforceTeamKeyInheritance?: boolean;
+  allowedBYOKProviders?: string[]; // e.g. ['google', 'openai', 'anthropic', 'deepseek', 'groq', 'mistral']
+
+  // Budget, Member & Platform Policies
+  canManageBudgets: boolean;
+  maxBudgetAllocatedUsd?: number;
+  canInviteMembers: boolean;
+  canConfigureRouting: boolean;
+  canViewTelemetry: boolean;
+  canManageSmtpAlerts?: boolean;
+  canManageCompanyProfile?: boolean;
+}
+
+export interface CompanyAdminUser {
+  id: string;
+  name: string;
+  email: string;
+  role: 'company_admin' | 'corporate_admin';
+  title?: string;
+  tierCap?: string;
+  monthlyTokenQuota?: number;
+  monthlyTokensUsed?: number;
+  privileges: CorporateAdminPrivileges;
+  assignedAt: string;
+  assignedBy?: string;
+  status: 'active' | 'invited' | 'suspended';
+  lastActiveAt?: string;
+}
+
 export interface UserPersona {
   id: string;
   name: string;
@@ -223,6 +266,7 @@ export interface UserPersona {
   role: UserRole;
   avatar: string;
   title: string;
+  companyId?: string;
   companyName?: string;
   teamId?: string;
   monthlyBudgetUsd: number;
@@ -234,6 +278,7 @@ export interface UserPersona {
   canSelectModel?: boolean; // Privilege to manually select AI model
   canSelectEngine?: boolean; // Privilege to manually select AI engine
   isCompanyAdmin?: boolean; // Whether the user is an admin of their company
+  corporatePrivileges?: CorporateAdminPrivileges; // Detailed corporate admin permissions
   canBYOK: boolean;
   canManageTeam: boolean;
   canManagePlatform: boolean;

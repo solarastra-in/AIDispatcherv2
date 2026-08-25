@@ -302,13 +302,79 @@ let serverEmailTemplates: Record<string, ServerEmailTemplate> = {
 </div>`,
     textBody: `[WhyOr Security] Security Vault Update Audit: {{event_type}}\n\nActor: {{actor_email}}\nScope: {{modified_provider}}\nTimestamp: {{timestamp}}\n\n{{custom_message}}`,
   },
+  company_onboarded: {
+    id: 'company_onboarded',
+    name: 'Company Provisioning & Enterprise Workspace Onboarding',
+    category: 'onboarding',
+    description: 'Welcome and provisioning statement sent to company admins when a new company/customer tenant is registered.',
+    subject: '🏢 [WhyOr Dispatch] Enterprise Provisioned: {{company_name}} - Quota & Workspace Credentials',
+    variables: [
+      '{{recipient_name}}',
+      '{{recipient_email}}',
+      '{{company_name}}',
+      '{{allocated_tokens}}',
+      '{{budget_limit}}',
+      '{{routing_priority}}',
+      '{{tenant_domain}}',
+      '{{authorized_models}}',
+      '{{login_url}}',
+      '{{timestamp}}',
+      '{{custom_message}}',
+    ],
+    htmlBody: `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #0f172a; color: #f8fafc; border-radius: 16px; border: 1px solid #334155; overflow: hidden; padding: 28px;">
+  <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #1e293b; padding-bottom: 16px; margin-bottom: 24px;">
+    <div style="font-size: 20px; font-weight: 800; color: #818cf8; letter-spacing: -0.5px;">⚡ WhyOr Dispatch AI</div>
+    <span style="background-color: rgba(52, 211, 153, 0.15); color: #34d399; border: 1px solid rgba(52, 211, 153, 0.3); font-size: 11px; padding: 4px 10px; border-radius: 9999px; font-weight: 700; text-transform: uppercase;">Enterprise Tenant Provisioned</span>
+  </div>
+  <div style="font-size: 14px; line-height: 1.6; color: #cbd5e1;">
+    <p style="margin-top: 0;">Hello <strong>{{recipient_name}}</strong>,</p>
+    <p>Your enterprise workspace for <strong>{{company_name}}</strong> has been successfully provisioned on <strong>WhyOr Dispatch AI</strong>. All engineering teams within your organization can now route models with <strong>$0.00 token markup</strong> using unified flat-rate sessions and BYOK keys.</p>
+    <div style="background-color: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 18px; margin: 20px 0;">
+      <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #334155;">
+        <span style="color: #94a3b8; font-size: 12px;">Organization:</span>
+        <span style="font-weight: 700; color: #f8fafc; font-size: 12px; font-family: monospace;">{{company_name}}</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #334155;">
+        <span style="color: #94a3b8; font-size: 12px;">Domain / Tenant:</span>
+        <span style="font-weight: 600; color: #38bdf8; font-size: 12px; font-family: monospace;">{{tenant_domain}}</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #334155;">
+        <span style="color: #94a3b8; font-size: 12px;">Monthly Token Quota:</span>
+        <span style="font-weight: 700; color: #34d399; font-size: 12px; font-family: monospace;">{{allocated_tokens}}</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #334155;">
+        <span style="color: #94a3b8; font-size: 12px;">Monthly Budget Cap:</span>
+        <span style="font-weight: 700; color: #fbbf24; font-size: 12px; font-family: monospace;">{{budget_limit}}</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #334155;">
+        <span style="color: #94a3b8; font-size: 12px;">Routing Priority:</span>
+        <span style="font-weight: 600; color: #a855f7; font-size: 12px; font-family: monospace;">{{routing_priority}}</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; padding: 6px 0;">
+        <span style="color: #94a3b8; font-size: 12px;">Model Access:</span>
+        <span style="font-weight: 600; color: #f8fafc; font-size: 12px; font-family: monospace;">{{authorized_models}}</span>
+      </div>
+    </div>
+    <p style="font-size: 13px; color: #94a3b8;">{{custom_message}}</p>
+    <div style="text-align: center; margin: 28px 0 16px 0;">
+      <a href="{{login_url}}" style="display: inline-block; background-color: #6366f1; color: #ffffff; text-decoration: none; font-size: 13px; font-weight: 700; padding: 12px 24px; border-radius: 10px; box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);">
+        Access Enterprise Portal &rarr;
+      </a>
+    </div>
+  </div>
+  <div style="margin-top: 28px; border-top: 1px solid #1e293b; padding-top: 16px; font-size: 11px; color: #64748b; text-align: center;">
+    WhyOr Dispatch AI Enterprise • SuperAdmin: solarastra.in@gmail.com • {{timestamp}}
+  </div>
+</div>`,
+    textBody: `[WhyOr Dispatch] Enterprise Provisioned: {{company_name}}\n\nHello {{recipient_name}},\n\nYour enterprise workspace for {{company_name}} has been provisioned on WhyOr Dispatch AI:\n- Monthly Quota: {{allocated_tokens}}\n- Budget Limit: {{budget_limit}}\n- Routing Priority: {{routing_priority}}\n- Models: {{authorized_models}}\n\n{{custom_message}}\n\nSign in to Portal: {{login_url}}\n\n--\nWhyOr Dispatch AI Enterprise • SuperAdmin: solarastra.in@gmail.com • {{timestamp}}`,
+  },
   onboarding_invite: {
     id: 'onboarding_invite',
     name: 'Team Member Onboarding & Model Access Grant',
     category: 'onboarding',
     description: 'Welcome email sent to newly invited developers or team members with allocated model quotas.',
-    subject: '✨ [WhyOr Dispatch] Welcome to {{company_name}} AI Gateway - Access Credentials & Quota',
-    variables: ['{{recipient_name}}', '{{recipient_email}}', '{{company_name}}', '{{role}}', '{{allocated_tokens}}', '{{authorized_models}}', '{{login_url}}', '{{timestamp}}', '{{custom_message}}'],
+    subject: '✨ [WhyOr Dispatch] Welcome {{recipient_name}} to {{company_name}} - Model Credentials & Quota',
+    variables: ['{{recipient_name}}', '{{recipient_email}}', '{{company_name}}', '{{team_name}}', '{{role}}', '{{allocated_tokens}}', '{{authorized_models}}', '{{login_url}}', '{{timestamp}}', '{{custom_message}}'],
     htmlBody: `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #0f172a; color: #f8fafc; border-radius: 16px; border: 1px solid #334155; overflow: hidden; padding: 28px;">
   <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #1e293b; padding-bottom: 16px; margin-bottom: 24px;">
     <div style="font-size: 20px; font-weight: 800; color: #818cf8; letter-spacing: -0.5px;">⚡ WhyOr Dispatch AI</div>
@@ -316,20 +382,83 @@ let serverEmailTemplates: Record<string, ServerEmailTemplate> = {
   </div>
   <div style="font-size: 14px; line-height: 1.6; color: #cbd5e1;">
     <p style="margin-top: 0;">Hello <strong>{{recipient_name}}</strong>,</p>
-    <p>You have been granted access to the <strong>WhyOr Dispatch AI Enterprise Gateway</strong> for <strong>{{company_name}}</strong>.</p>
+    <p>You have been granted access to the <strong>WhyOr Dispatch AI Enterprise Gateway</strong> for <strong>{{company_name}}</strong> under the <strong>{{team_name}}</strong> workspace.</p>
     <div style="background-color: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 18px; margin: 20px 0;">
+      <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #334155;">
+        <span style="color: #94a3b8; font-size: 12px;">Organization & Team:</span>
+        <span style="font-weight: 700; color: #f8fafc; font-size: 12px; font-family: monospace;">{{company_name}} &bull; {{team_name}}</span>
+      </div>
       <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #334155;">
         <span style="color: #94a3b8; font-size: 12px;">Assigned Role:</span>
         <span style="font-weight: 700; color: #a855f7; font-size: 12px; font-family: monospace;">{{role}}</span>
       </div>
-      <div style="display: flex; justify-content: space-between; padding: 6px 0;">
+      <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #334155;">
         <span style="color: #94a3b8; font-size: 12px;">Monthly Token Allocation:</span>
         <span style="font-weight: 700; color: #34d399; font-size: 12px; font-family: monospace;">{{allocated_tokens}}</span>
       </div>
+      <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #334155;">
+        <span style="color: #94a3b8; font-size: 12px;">Authorized Models:</span>
+        <span style="font-weight: 600; color: #38bdf8; font-size: 12px; font-family: monospace;">{{authorized_models}}</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; padding: 6px 0;">
+        <span style="color: #94a3b8; font-size: 12px;">Routing Priority:</span>
+        <span style="font-weight: 600; color: #f8fafc; font-size: 12px; font-family: monospace;">Zero-Markup Flat Rate Subscriptions</span>
+      </div>
+    </div>
+    <p style="font-size: 13px; color: #94a3b8;">{{custom_message}}</p>
+    <div style="text-align: center; margin: 28px 0 16px 0;">
+      <a href="{{login_url}}" style="display: inline-block; background-color: #6366f1; color: #ffffff; text-decoration: none; font-size: 13px; font-weight: 700; padding: 12px 24px; border-radius: 10px; box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);">
+        Sign In with Google SSO &rarr;
+      </a>
     </div>
   </div>
+  <div style="margin-top: 28px; border-top: 1px solid #1e293b; padding-top: 16px; font-size: 11px; color: #64748b; text-align: center;">
+    WhyOr Dispatch AI Enterprise • SuperAdmin: solarastra.in@gmail.com • {{timestamp}}
+  </div>
 </div>`,
-    textBody: `[WhyOr Dispatch] Welcome to {{company_name}} AI Gateway\n\nRole: {{role}}\nAllocated Tokens: {{allocated_tokens}}\n\n{{custom_message}}\n\nSign in: {{login_url}}`,
+    textBody: `[WhyOr Dispatch] Welcome to {{company_name}} AI Gateway\n\nHello {{recipient_name}},\n\nYou have been granted access to WhyOr Dispatch AI Enterprise for {{company_name}} under {{team_name}}:\n- Role: {{role}}\n- Allocated Tokens: {{allocated_tokens}}\n- Authorized Models: {{authorized_models}}\n\n{{custom_message}}\n\nSign in: {{login_url}}\n\n--\nWhyOr Dispatch AI Enterprise • SuperAdmin: solarastra.in@gmail.com`,
+  },
+  admin_privilege_grant: {
+    id: 'admin_privilege_grant',
+    name: 'Administrator Privileges & RBAC Role Grant',
+    category: 'security',
+    description: 'Triggered when administrative privileges, role tiers, or company governance rights are updated.',
+    subject: '🛡️ [WhyOr Security] Administrator Privileges Updated: {{role}} ({{company_name}})',
+    variables: ['{{recipient_name}}', '{{recipient_email}}', '{{company_name}}', '{{role}}', '{{tier_cap}}', '{{active_permissions}}', '{{sent_by}}', '{{login_url}}', '{{timestamp}}', '{{custom_message}}'],
+    htmlBody: `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #0f172a; color: #f8fafc; border-radius: 16px; border: 1px solid #334155; overflow: hidden; padding: 28px;">
+  <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #1e293b; padding-bottom: 16px; margin-bottom: 24px;">
+    <div style="font-size: 20px; font-weight: 800; color: #38bdf8; letter-spacing: -0.5px;">🛡️ WhyOr Security</div>
+    <span style="background-color: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); font-size: 11px; padding: 4px 10px; border-radius: 9999px; font-weight: 700; text-transform: uppercase;">Privilege Update</span>
+  </div>
+  <div style="font-size: 14px; line-height: 1.6; color: #cbd5e1;">
+    <p style="margin-top: 0;">Dear <strong>{{recipient_name}}</strong>,</p>
+    <p>Your administrative permissions and role matrix on <strong>WhyOr Dispatch AI</strong> for <strong>{{company_name}}</strong> have been updated by SuperAdmin (<strong>{{sent_by}}</strong>).</p>
+    <div style="background-color: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 18px; margin: 20px 0;">
+      <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #334155;">
+        <span style="color: #94a3b8; font-size: 12px;">Assigned Role:</span>
+        <span style="font-weight: 700; color: #38bdf8; font-size: 12px; font-family: monospace;">{{role}}</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #334155;">
+        <span style="color: #94a3b8; font-size: 12px;">Model Tier Access:</span>
+        <span style="font-weight: 600; color: #a855f7; font-size: 12px; font-family: monospace;">{{tier_cap}}</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; padding: 6px 0;">
+        <span style="color: #94a3b8; font-size: 12px;">Active Permissions:</span>
+        <span style="font-weight: 600; color: #34d399; font-size: 12px; font-family: monospace;">{{active_permissions}}</span>
+      </div>
+    </div>
+    <p style="font-size: 13px; color: #94a3b8;">{{custom_message}}</p>
+    <div style="text-align: center; margin: 28px 0 16px 0;">
+      <a href="{{login_url}}" style="display: inline-block; background-color: #0284c7; color: #ffffff; text-decoration: none; font-size: 13px; font-weight: 700; padding: 12px 24px; border-radius: 10px; box-shadow: 0 4px 14px rgba(2, 132, 199, 0.4);">
+        Open Governance Dashboard &rarr;
+      </a>
+    </div>
+  </div>
+  <div style="margin-top: 28px; border-top: 1px solid #1e293b; padding-top: 16px; font-size: 11px; color: #64748b; text-align: center;">
+    WhyOr Dispatch AI Enterprise • SuperAdmin: solarastra.in@gmail.com • {{timestamp}}
+  </div>
+</div>`,
+    textBody: `[WhyOr Security] Administrator Privileges Updated: {{role}} ({{company_name}})\n\nDear {{recipient_name}},\n\nYour permissions on WhyOr Dispatch AI for {{company_name}} have been updated:\n- Assigned Role: {{role}}\n- Tier Cap: {{tier_cap}}\n- Active Permissions: {{active_permissions}}\n- Authorized by: {{sent_by}}\n\n{{custom_message}}\n\nSign in: {{login_url}}\n\n--\nWhyOr Dispatch AI Enterprise • SuperAdmin: solarastra.in@gmail.com`,
   },
   test_verification: {
     id: 'test_verification',
@@ -2600,67 +2729,270 @@ app.post("/api/admin/smtp/send-test", async (req, res) => {
   const activeFromName = (fromName && typeof fromName === "string" ? fromName.trim() : "") || smtpSettings.fromName || "WhyOr Dispatch AI Enterprise";
   const activeReplyTo = (replyTo && typeof replyTo === "string" ? replyTo.trim() : "") || smtpSettings.replyTo || activeFromEmail;
 
-  const recipientEmail = to || activeFromEmail || "solarastra.in@gmail.com";
+  const recipientEmail = (to || activeFromEmail || "solarastra.in@gmail.com").trim();
+
+  // Extract / format recipient friendly name
+  const rawRecipientPart = recipientEmail.includes('@') ? recipientEmail.split('@')[0] : recipientEmail;
+  const capitalizedRecipient = rawRecipientPart.charAt(0).toUpperCase() + rawRecipientPart.slice(1);
 
   // Check if a saved server template exists
   const matchedTemplate = serverEmailTemplates[templateType];
 
+  // Build comprehensive variable dictionary from all sources
+  const passedVars: Record<string, any> = (variables && typeof variables === 'object') ? variables : {};
+
+  // Resolve dynamic values prioritizing explicit variables, body fields, and smart context defaults
+  const resolvedRecipientName = (
+    passedVars['{{recipient_name}}'] ||
+    passedVars.recipient_name ||
+    passedVars.recipientName ||
+    passedVars.name ||
+    req.body.recipientName ||
+    req.body.recipient_name ||
+    capitalizedRecipient
+  );
+
+  const resolvedCompanyName = (
+    passedVars['{{company_name}}'] ||
+    passedVars.company_name ||
+    passedVars.companyName ||
+    passedVars.company ||
+    req.body.companyName ||
+    req.body.company_name ||
+    req.body.company ||
+    (companyProfile && companyProfile.companyName && companyProfile.companyName !== "Acme Enterprises AI Lab" ? companyProfile.companyName : (recipientEmail.includes('@') ? recipientEmail.split('@')[1].split('.')[0].toUpperCase() + ' Workspace' : "Enterprise AI Workspace"))
+  );
+
+  const resolvedTeamName = (
+    passedVars['{{team_name}}'] ||
+    passedVars.team_name ||
+    passedVars.teamName ||
+    req.body.teamName ||
+    req.body.team_name ||
+    req.body.team ||
+    "AI Engineering Core"
+  );
+
+  const resolvedRole = (
+    passedVars['{{role}}'] ||
+    passedVars.role ||
+    req.body.role ||
+    "Team Lead / AI Architect"
+  );
+
+  const resolvedAllocatedTokens = (
+    passedVars['{{allocated_tokens}}'] ||
+    passedVars.allocated_tokens ||
+    passedVars.allocatedTokens ||
+    req.body.allocatedTokens ||
+    req.body.allocated_tokens ||
+    "15,000,000 tokens / month"
+  );
+
+  const resolvedAuthorizedModels = (
+    passedVars['{{authorized_models}}'] ||
+    passedVars.authorized_models ||
+    passedVars.authorizedModels ||
+    passedVars.models ||
+    req.body.authorizedModels ||
+    req.body.authorized_models ||
+    req.body.models ||
+    "Claude 3.7 Sonnet, GPT-4.5, Gemini 2.5 Pro, DeepSeek R1"
+  );
+
+  const resolvedBudgetLimit = (
+    passedVars['{{budget_limit}}'] ||
+    passedVars.budget_limit ||
+    passedVars.budgetLimit ||
+    req.body.budgetLimit ||
+    req.body.budget_limit ||
+    "$10,000.00 / month"
+  );
+
+  const resolvedCurrentSpend = (
+    passedVars['{{current_spend}}'] ||
+    passedVars.current_spend ||
+    passedVars.currentSpend ||
+    req.body.currentSpend ||
+    req.body.current_spend ||
+    "$8,500.00"
+  );
+
+  const resolvedThreshold = (
+    passedVars['{{threshold_percentage}}'] ||
+    passedVars.threshold_percentage ||
+    passedVars.thresholdPercentage ||
+    req.body.thresholdPercentage ||
+    req.body.threshold_percentage ||
+    "85"
+  );
+
+  const resolvedRoutingPriority = (
+    passedVars['{{routing_priority}}'] ||
+    passedVars.routing_priority ||
+    passedVars.routingPriority ||
+    req.body.routingPriority ||
+    req.body.routing_priority ||
+    "Zero-Markup Flat Rate Subscriptions"
+  );
+
+  const resolvedTenantDomain = (
+    passedVars['{{tenant_domain}}'] ||
+    passedVars.tenant_domain ||
+    passedVars.tenantDomain ||
+    req.body.tenantDomain ||
+    req.body.tenant_domain ||
+    (recipientEmail.includes('@') ? recipientEmail.split('@')[1] : "enterprise.ai")
+  );
+
+  const resolvedLoginUrl = (
+    passedVars['{{login_url}}'] ||
+    passedVars.login_url ||
+    passedVars.loginUrl ||
+    req.body.loginUrl ||
+    req.body.login_url ||
+    req.body.actionUrl ||
+    req.body.action_url ||
+    "https://ais-dev-gcdyq3rgswqtgkxcjbfmqt-4552824319.us-west2.run.app"
+  );
+
+  const resolvedActionUrl = (
+    passedVars['{{action_url}}'] ||
+    passedVars.action_url ||
+    passedVars.actionUrl ||
+    req.body.actionUrl ||
+    req.body.action_url ||
+    resolvedLoginUrl
+  );
+
+  const resolvedCustomMessage = (
+    passedVars['{{custom_message}}'] ||
+    passedVars.custom_message ||
+    passedVars.customMessage ||
+    customMessage ||
+    req.body.customMessage ||
+    `Dispatched via WhyOr Enterprise verified mail server for ${resolvedCompanyName}.`
+  );
+
+  const resolvedTimestamp = (
+    passedVars['{{timestamp}}'] ||
+    passedVars.timestamp ||
+    new Date().toLocaleString()
+  );
+
+  const resolvedSentBy = (
+    passedVars['{{sent_by}}'] ||
+    passedVars.sent_by ||
+    passedVars.sentBy ||
+    sentBy ||
+    `SuperAdmin (${activeFromEmail || 'solarastra.in@gmail.com'})`
+  );
+
+  const varDictionary: Record<string, string> = {
+    '{{recipient_name}}': String(resolvedRecipientName),
+    '{{recipient_email}}': String(recipientEmail),
+    '{{company_name}}': String(resolvedCompanyName),
+    '{{team_name}}': String(resolvedTeamName),
+    '{{role}}': String(resolvedRole),
+    '{{allocated_tokens}}': String(resolvedAllocatedTokens),
+    '{{authorized_models}}': String(resolvedAuthorizedModels),
+    '{{budget_limit}}': String(resolvedBudgetLimit),
+    '{{current_spend}}': String(resolvedCurrentSpend),
+    '{{threshold_percentage}}': String(resolvedThreshold),
+    '{{tokens_used}}': String(passedVars['{{tokens_used}}'] || passedVars.tokens_used || req.body.tokensUsed || '42,500,000 tokens'),
+    '{{fallback_route}}': String(passedVars['{{fallback_route}}'] || passedVars.fallback_route || 'Zero-Markup Flat-Rate Priority'),
+    '{{routing_priority}}': String(resolvedRoutingPriority),
+    '{{tenant_domain}}': String(resolvedTenantDomain),
+    '{{tier_cap}}': String(passedVars['{{tier_cap}}'] || passedVars.tier_cap || req.body.tierCap || 'Tier 3 (Reasoning & Frontier Models)'),
+    '{{active_permissions}}': String(passedVars['{{active_permissions}}'] || passedVars.active_permissions || req.body.activePermissions || 'Manage Team, Dispatch Models, View Telemetry'),
+    '{{login_url}}': String(resolvedLoginUrl),
+    '{{action_url}}': String(resolvedActionUrl),
+    '{{custom_message}}': String(resolvedCustomMessage),
+    '{{timestamp}}': String(resolvedTimestamp),
+    '{{sent_by}}': String(resolvedSentBy),
+    '{{smtp_host}}': String(passedVars['{{smtp_host}}'] || passedVars.smtp_host || activeHost),
+    '{{smtp_port}}': String(passedVars['{{smtp_port}}'] || passedVars.smtp_port || activePort),
+    '{{sender_identity}}': String(passedVars['{{sender_identity}}'] || passedVars.sender_identity || `${activeFromName} <${activeFromEmail}>`),
+    '{{auth_user}}': String(passedVars['{{auth_user}}'] || passedVars.auth_user || activeUser || 'solarastra.in@gmail.com'),
+    '{{event_type}}': String(passedVars['{{event_type}}'] || passedVars.event_type || req.body.eventType || 'Security Policy & Vault Synchronization'),
+    '{{actor_email}}': String(passedVars['{{actor_email}}'] || passedVars.actor_email || req.body.actorEmail || resolvedSentBy),
+    '{{ip_address}}': String(passedVars['{{ip_address}}'] || passedVars.ip_address || '10.0.4.12 (VPC Ingress)'),
+    '{{modified_provider}}': String(passedVars['{{modified_provider}}'] || passedVars.modified_provider || req.body.modifiedProvider || 'Enterprise Unified API Key Vault'),
+    '{{failed_provider}}': String(passedVars['{{failed_provider}}'] || passedVars.failed_provider || 'Anthropic Direct API'),
+    '{{fallback_provider}}': String(passedVars['{{fallback_provider}}'] || passedVars.fallback_provider || 'Claude CLI Subscription Proxy'),
+    '{{reason}}': String(passedVars['{{reason}}'] || passedVars.reason || 'Upstream 429 Rate Limit - Automatic zero-markup fallback'),
+    '{{latency_ms}}': String(passedVars['{{latency_ms}}'] || passedVars.latency_ms || '142'),
+    '{{affected_requests}}': String(passedVars['{{affected_requests}}'] || passedVars.affected_requests || '12 requests'),
+    '{{billing_period}}': String(passedVars['{{billing_period}}'] || passedVars.billing_period || new Date().toLocaleString('default', { month: 'long', year: 'numeric' })),
+    '{{invoice_id}}': String(passedVars['{{invoice_id}}'] || passedVars.invoice_id || ('INV-' + Date.now().toString(36).toUpperCase())),
+    '{{total_amount}}': String(passedVars['{{total_amount}}'] || passedVars.total_amount || '$0.00 (Zero-Markup)'),
+    '{{flat_rate_savings}}': String(passedVars['{{flat_rate_savings}}'] || passedVars.flat_rate_savings || '$1,842.50'),
+    '{{dispatched_requests}}': String(passedVars['{{dispatched_requests}}'] || passedVars.dispatched_requests || '184,920 requests'),
+    '{{subscription_tier}}': String(passedVars['{{subscription_tier}}'] || passedVars.subscription_tier || 'Enterprise Unlimited Zero-Markup Tier'),
+  };
+
+  // Merge any additional custom passed variables
+  for (const [k, v] of Object.entries(passedVars)) {
+    const normKey = k.startsWith('{{') && k.endsWith('}}') ? k : `{{${k}}}`;
+    varDictionary[normKey] = String(v ?? '');
+  }
+
+  // Determine Email Subject
   let emailSubject = subject;
   if (!emailSubject) {
     if (matchedTemplate) {
-      emailSubject = matchedTemplate.subject
-        .replace(/\{\{company_name\}\}/g, companyProfile.companyName || "WhyOr Enterprise")
-        .replace(/\{\{recipient_email\}\}/g, recipientEmail)
-        .replace(/\{\{recipient_name\}\}/g, recipientEmail.split('@')[0])
-        .replace(/\{\{threshold_percentage\}\}/g, "85")
-        .replace(/\{\{timestamp\}\}/g, new Date().toLocaleString());
+      emailSubject = matchedTemplate.subject;
     } else {
       emailSubject = `[WhyOr Dispatch AI] Live SMTP Test Verification - ${new Date().toLocaleTimeString()}`;
     }
   }
 
+  // Perform variable substitution on Subject
+  for (const [k, v] of Object.entries(varDictionary)) {
+    emailSubject = emailSubject.replaceAll(k, v);
+  }
+  // Sanitize any remaining unrendered variables in Subject
+  emailSubject = emailSubject.replace(/\{\{[a-zA-Z0-9_-]+\}\}/g, '').trim();
+
+  // Determine Email HTML and Plaintext Content
   let finalHtmlContent = "";
   let finalPlainText: string | undefined = customText;
 
   if (customHtml) {
     finalHtmlContent = customHtml;
   } else if (matchedTemplate) {
-    let replacedBody = matchedTemplate.htmlBody
-      .replace(/\{\{recipient_name\}\}/g, recipientEmail.split('@')[0])
-      .replace(/\{\{recipient_email\}\}/g, recipientEmail)
-      .replace(/\{\{company_name\}\}/g, companyProfile.companyName || "SolarAstra Enterprise")
-      .replace(/\{\{threshold_percentage\}\}/g, "85")
-      .replace(/\{\{current_spend\}\}/g, "$8,500.00")
-      .replace(/\{\{budget_limit\}\}/g, "$10,000.00")
-      .replace(/\{\{tokens_used\}\}/g, "42,500,000 tokens")
-      .replace(/\{\{fallback_route\}\}/g, "Flat-Rate Subscription Priority")
-      .replace(/\{\{timestamp\}\}/g, new Date().toISOString())
-      .replace(/\{\{custom_message\}\}/g, customMessage || "Dispatched via WhyOr Enterprise verified mail server.")
-      .replace(/\{\{action_url\}\}/g, "https://ais-dev-gcdyq3rgswqtgkxcjbfmqt-4552824319.us-west2.run.app");
-
-    finalHtmlContent = replacedBody;
+    finalHtmlContent = matchedTemplate.htmlBody;
     if (matchedTemplate.textBody && !finalPlainText) {
-      finalPlainText = matchedTemplate.textBody
-        .replace(/\{\{recipient_name\}\}/g, recipientEmail.split('@')[0])
-        .replace(/\{\{recipient_email\}\}/g, recipientEmail)
-        .replace(/\{\{company_name\}\}/g, companyProfile.companyName || "SolarAstra Enterprise")
-        .replace(/\{\{threshold_percentage\}\}/g, "85")
-        .replace(/\{\{timestamp\}\}/g, new Date().toISOString());
+      finalPlainText = matchedTemplate.textBody;
     }
   } else {
     finalHtmlContent = `
       <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #0f172a; color: #f8fafc; padding: 24px; border-radius: 12px; border: 1px solid #334155;">
         <h3 style="color: #6366f1; margin-top: 0;">⚡ WhyOr Dispatch AI Verification</h3>
         <p>Trial email sent to <strong>${recipientEmail}</strong></p>
-        <p>${customMessage || "Live SMTP test verification."}</p>
+        <p>${resolvedCustomMessage}</p>
         <div style="background-color: #1e293b; padding: 12px; border-radius: 8px; font-family: monospace; font-size: 12px; margin-top: 16px;">
           <div>Host: ${activeHost}:${activePort}</div>
           <div>Encryption: ${activeSecure ? 'SSL Direct (Port 465)' : 'STARTTLS (Port 587)'}</div>
           <div>Sender: ${activeFromName} &lt;${activeFromEmail}&gt;</div>
-          <div>Timestamp: ${new Date().toISOString()}</div>
+          <div>Timestamp: ${resolvedTimestamp}</div>
         </div>
       </div>
     `;
+  }
+
+  // Perform full variable substitution on HTML and Plaintext
+  for (const [k, v] of Object.entries(varDictionary)) {
+    finalHtmlContent = finalHtmlContent.replaceAll(k, v);
+    if (finalPlainText) {
+      finalPlainText = finalPlainText.replaceAll(k, v);
+    }
+  }
+
+  // SAFETY SANITIZATION: Clean any remaining unrendered {{...}} placeholders so raw tokens never leak to recipients
+  finalHtmlContent = finalHtmlContent.replace(/\{\{[a-zA-Z0-9_-]+\}\}/g, '');
+  if (finalPlainText) {
+    finalPlainText = finalPlainText.replace(/\{\{[a-zA-Z0-9_-]+\}\}/g, '');
   }
 
   const isGoogle = activeHost.toLowerCase().includes("gmail") || activeHost.toLowerCase().includes("google");
@@ -4638,20 +4970,50 @@ app.get("/api/admin/companies", (req, res) => {
 });
 
 app.post("/api/admin/companies", (req, res) => {
-  const { name, ssoDomain, seededGmailAddresses } = req.body;
+  const { name, ssoDomain, domain, seededGmailAddresses } = req.body;
   const email = resolveAuthenticatedEmail(req);
-  if (!name) return res.status(400).json({ error: "Company name is required" });
+  if (!name || typeof name !== "string" || !name.trim()) {
+    return res.status(400).json({ success: false, error: "Company name is required" });
+  }
+
+  const trimmedName = name.trim();
+  const activeDomain = (domain || ssoDomain || "").trim();
+
+  // Server-side duplicate validation check
+  const duplicate = Object.values(companies).find(
+    (c) =>
+      c.name.trim().toLowerCase() === trimmedName.toLowerCase() ||
+      (activeDomain && c.ssoDomain && c.ssoDomain.trim().toLowerCase() === activeDomain.toLowerCase())
+  );
+
+  if (duplicate) {
+    return res.status(409).json({
+      success: false,
+      error: "DUPLICATE_COMPANY",
+      message: `A company named '${duplicate.name}' or domain '${duplicate.ssoDomain || activeDomain}' already exists. Duplicate creation prevented.`
+    });
+  }
+
   const id = `cmp_${Date.now().toString(36)}`;
   const company: Company = {
     id,
-    name,
-    ssoDomain: ssoDomain || undefined,
+    name: trimmedName,
+    ssoDomain: activeDomain || undefined,
     seededGmailAddresses: Array.isArray(seededGmailAddresses) ? seededGmailAddresses : [],
     createdAt: new Date().toISOString(),
     createdByUserId: email || "super_admin",
   };
   companies[id] = company;
-  res.status(201).json(company);
+  res.status(201).json({ success: true, company });
+});
+
+app.delete("/api/admin/companies/:id", (req, res) => {
+  const id = req.params.id;
+  if (!companies[id]) {
+    return res.status(404).json({ success: false, error: "Company not found" });
+  }
+  delete companies[id];
+  res.json({ success: true, message: `Company ${id} removed from registry` });
 });
 
 app.get("/api/admin/companies/:id", (req, res) => {

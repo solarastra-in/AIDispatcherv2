@@ -499,6 +499,49 @@ export async function loadAuditLogsFromFirestore(limitCount: number = 50): Promi
 }
 
 // 7. Companies & Enterprise Onboarding Persistence
+export interface CorporateAdminPrivileges {
+  // Team Creation & Hierarchy Controls
+  canCreateTeams: boolean;
+  maxTeamsAllowed?: number; // e.g. 5, 10, or undefined for unlimited
+  canAssignTeamLeads?: boolean;
+  canDeleteTeams?: boolean;
+  canSetTeamBudgets?: boolean;
+  allowedTeamTiers?: ('low' | 'mid' | 'high' | 'frontier' | 'deep_reasoning')[];
+
+  // BYOK Management Controls
+  canManageBYOK: boolean;
+  canAddProviderKeys?: boolean;
+  canDeleteProviderKeys?: boolean;
+  canToggleSubscriptionFallback?: boolean;
+  canEnforceTeamKeyInheritance?: boolean;
+  allowedBYOKProviders?: string[]; // e.g. ['google', 'openai', 'anthropic', 'deepseek', 'groq', 'mistral']
+
+  // Budget, Member & Platform Policies
+  canManageBudgets: boolean;
+  maxBudgetAllocatedUsd?: number;
+  canInviteMembers: boolean;
+  canConfigureRouting: boolean;
+  canViewTelemetry: boolean;
+  canManageSmtpAlerts?: boolean;
+  canManageCompanyProfile?: boolean;
+}
+
+export interface CompanyAdminUser {
+  id: string;
+  name: string;
+  email: string;
+  role: 'company_admin' | 'corporate_admin';
+  title?: string;
+  tierCap?: string;
+  monthlyTokenQuota?: number;
+  monthlyTokensUsed?: number;
+  privileges: CorporateAdminPrivileges;
+  assignedAt: string;
+  assignedBy?: string;
+  status: 'active' | 'invited' | 'suspended';
+  lastActiveAt?: string;
+}
+
 export interface CompanyFirestore {
   id: string;
   name: string;
@@ -513,12 +556,50 @@ export interface CompanyFirestore {
   routingPriority: 'subscription_first' | 'byok_first' | 'balanced' | 'latency_optimized';
   smtpAlertsEnabled: boolean;
   superAdminEmail: string;
+  companyAdminEmail?: string;
+  companyAdmins?: CompanyAdminUser[];
   status: 'active' | 'paused' | 'suspended';
   createdAt: string;
   updatedAt: string;
 }
 
-export async function saveCompanyToFirestore(company: CompanyFirestore): Promise<void> {
+export async function saveCompanyToFirestore(
+  company: CompanyFirestore,
+  options?: { checkDuplicates?: boolean }
+): Promise<void> {
+  const compName = (company.name || '').trim().toLowerCase();
+  const compDomain = (company.domain || '').trim().toLowerCase();
+
+  // If duplicate checking is requested, verify against Firestore and cached documents
+  if (options?.checkDuplicates) {
+    try {
+      const snap = await getDocs(collection(db, 'companies'));
+      let conflictFound = false;
+      let conflictName = '';
+      snap.forEach((d) => {
+        const data = d.data() as CompanyFirestore;
+        if (d.id !== company.id) {
+          const dName = (data.name || '').trim().toLowerCase();
+          const dDomain = (data.domain || '').trim().toLowerCase();
+          if ((compName && dName === compName) || (compDomain && dDomain && dDomain === compDomain)) {
+            conflictFound = true;
+            conflictName = data.name;
+          }
+        }
+      });
+
+      if (conflictFound) {
+        throw new Error(`DUPLICATE_COMPANY: Customer '${conflictName || company.name}' or domain '${company.domain}' already exists in registry.`);
+      }
+    } catch (checkErr: any) {
+      if (checkErr.message?.startsWith('DUPLICATE_COMPANY')) {
+        throw checkErr;
+      }
+      // Non-blocking network check fallback
+      console.warn('Duplicate check warning:', checkErr?.message || checkErr);
+    }
+  }
+
   try {
     const cached = safeStorageGet<CompanyFirestore[]>('whyor_companies', []);
     const idx = cached.findIndex(c => c.id === company.id);
@@ -1223,7 +1304,7 @@ export async function loadAdminKeyConfigsFromFirestore(): Promise<AdminKeyConfig
   }
   
   const rawCached = safeStorageGet<AdminKeyConfig[]>('whyor_admin_keys', DEFAULT_ADMIN_KEYS);
-  const sanitized = (rawCached || DEFAULT_ADMIN_KEYS).map(k => {
+  return (rawCached || DEFAULT_ADMIN_KEYS).map(k => {
     const hasKey = Boolean(k.apiKey && k.apiKey.trim().length > 0);
     const hasSub = Boolean(k.hasSubscription && (k.subscriptionTier || k.sessionTokenMasked || k.subscriptionEmail));
     const isConfigured = hasKey || hasSub;
@@ -1235,5 +1316,33 @@ export async function loadAdminKeyConfigsFromFirestore(): Promise<AdminKeyConfig
       status: isConfigured ? (k.status || 'active') : 'unconfigured',
     };
   });
-  return sanitized;
+}
+
+export async function savePaymentInvoiceToFirestore(invoice: any): Promise<void> {
+  try {
+    const cached = safeStorageGet<any[]>('whyor_invoices', []);
+    const updated = [invoice, ...cached.filter(i => i.id !== invoice.id)].slice(0, 100);
+    safeStorageSet('whyor_invoices', updated);
+
+    const docRef = doc(db, 'billing_invoices', invoice.id);
+    await setDoc(docRef, invoice, { merge: true });
+  } catch (err: any) {
+    console.warn(`Notice: Saved invoice ${invoice.id} locally:`, err?.message || err);
+  }
+}
+
+export async function loadPaymentInvoicesFromFirestore(): Promise<any[]> {
+  try {
+    const q = query(collection(db, 'billing_invoices'), orderBy('createdAt', 'desc'), limit(50));
+    const snap = await getDocs(q);
+    if (!snap.empty) {
+      const invoices: any[] = [];
+      snap.forEach((d) => invoices.push(d.data()));
+      safeStorageSet('whyor_invoices', invoices);
+      return invoices;
+    }
+  } catch (err: any) {
+    console.warn('Notice: Firestore offline for invoices, using local cache:', err?.message || err);
+  }
+  return safeStorageGet<any[]>('whyor_invoices', []);
 }

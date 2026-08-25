@@ -362,10 +362,12 @@ export default function App() {
               <SavingsAnalyticsDashboard
                 activePersona={activePersona}
                 ledger={ledger}
+                models={models}
                 onNavigateTab={setCurrentTab}
                 onOpenAuthGate={() => setIsAuthGateOpen(true)}
-                onPrefillPrompt={(p) => {
-                  setPrefilledPrompt(p);
+                onPrefillPrompt={(p, modelId) => {
+                  if (p) setPrefilledPrompt(p);
+                  if (modelId) setPrefilledModelId(modelId);
                   setCurrentTab('dispatch');
                 }}
               />

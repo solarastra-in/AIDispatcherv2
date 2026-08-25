@@ -43,9 +43,10 @@ import {
   BookOpen,
   Check
 } from 'lucide-react';
-import { UserPersona, ModelTier, ContextLedgerEntry } from '../types';
+import { UserPersona, ModelTier, ContextLedgerEntry, AIModel } from '../types';
 import { TASK_ARCHETYPES } from '../core/taskTaxonomy';
 import { DispatchHeatmap } from './DispatchHeatmap';
+import { ModelLatencyCostChart } from './ModelLatencyCostChart';
 import { UnderstandingMetricsModal } from './UnderstandingMetricsModal';
 import { auth } from '../lib/firebaseClient';
 import { Lock } from 'lucide-react';
@@ -53,8 +54,9 @@ import { Lock } from 'lucide-react';
 interface SavingsAnalyticsDashboardProps {
   activePersona: UserPersona;
   ledger?: ContextLedgerEntry[];
+  models?: AIModel[];
   onNavigateTab?: (tab: string) => void;
-  onPrefillPrompt?: (prompt: string) => void;
+  onPrefillPrompt?: (prompt: string, modelId?: string) => void;
   onOpenAuthGate?: () => void;
 }
 
@@ -278,13 +280,14 @@ const CustomChartTooltip = ({ active, payload, label }: any) => {
 export const SavingsAnalyticsDashboard: React.FC<SavingsAnalyticsDashboardProps> = ({
   activePersona,
   ledger = [],
+  models,
   onNavigateTab,
   onPrefillPrompt,
   onOpenAuthGate,
 }) => {
   const [selectedPersonaFilter, setSelectedPersonaFilter] = useState<string>('all');
   const [timeRange, setTimeRange] = useState<'24h' | '7d' | '30d' | 'q3'>('24h');
-  const [selectedChartTab, setSelectedChartTab] = useState<'heatmap' | 'archetypes' | 'tokens' | 'cost' | 'providers'>('heatmap');
+  const [selectedChartTab, setSelectedChartTab] = useState<'heatmap' | 'latency_cost' | 'archetypes' | 'tokens' | 'cost' | 'providers'>('heatmap');
   const [isUnderstandingModalOpen, setIsUnderstandingModalOpen] = useState<boolean>(false);
   const [isFormulaModalOpen, setIsFormulaModalOpen] = useState<boolean>(false);
 
@@ -695,6 +698,21 @@ export const SavingsAnalyticsDashboard: React.FC<SavingsAnalyticsDashboardProps>
           </button>
 
           <button
+            onClick={() => setSelectedChartTab('latency_cost')}
+            className={`px-3 py-1.5 rounded-xl font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+              selectedChartTab === 'latency_cost'
+                ? 'bg-gradient-to-r from-cyan-500 via-blue-500 to-indigo-500 text-slate-950 font-bold shadow-md shadow-cyan-500/20'
+                : 'bg-white/5 text-slate-400 hover:text-white border border-white/5'
+            }`}
+          >
+            <Cpu className={`w-3.5 h-3.5 ${selectedChartTab === 'latency_cost' ? 'text-slate-950' : 'text-cyan-400'}`} />
+            <span>Latency vs. Cost Matrix</span>
+            <span className="px-1.5 py-0.2 rounded bg-cyan-400/20 text-cyan-300 text-[9px] font-bold border border-cyan-400/30">
+              Pareto
+            </span>
+          </button>
+
+          <button
             onClick={() => setSelectedChartTab('archetypes')}
             className={`px-3 py-1.5 rounded-xl font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
               selectedChartTab === 'archetypes'
@@ -752,6 +770,15 @@ export const SavingsAnalyticsDashboard: React.FC<SavingsAnalyticsDashboardProps>
           <DispatchHeatmap
             ledger={ledger}
             timeRange={timeRange}
+            onNavigateTab={onNavigateTab}
+            onPrefillPrompt={onPrefillPrompt}
+          />
+        )}
+
+        {/* TAB: Latency vs Cost Trade-off Matrix */}
+        {selectedChartTab === 'latency_cost' && (
+          <ModelLatencyCostChart
+            models={models}
             onNavigateTab={onNavigateTab}
             onPrefillPrompt={onPrefillPrompt}
           />

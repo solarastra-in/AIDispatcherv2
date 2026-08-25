@@ -560,6 +560,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 />
                 <span className={`hidden sm:inline text-[9px] font-mono px-1.5 py-0.5 rounded-md uppercase font-bold ${
                   activePersona.role === 'platform_admin' ? 'bg-orange-500/20 text-orange-300 border border-orange-400/30' :
+                  activePersona.role === 'corporate_admin' ? 'bg-purple-500/20 text-purple-300 border border-purple-400/30' :
                   activePersona.role === 'team_admin' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400/30' :
                   activePersona.role === 'team_member' ? 'bg-blue-500/20 text-blue-300 border border-blue-400/30' :
                   activePersona.role === 'user' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/30' :

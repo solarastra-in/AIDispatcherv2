@@ -24,7 +24,7 @@ interface SubscriptionOAuthModalProps {
   provider: AIProvider;
   providerDisplayName: string;
   defaultEmail?: string;
-  onSuccess: () => void;
+  onSuccess: (updatedCred?: any) => void;
 }
 
 export const SubscriptionOAuthModal: React.FC<SubscriptionOAuthModalProps> = ({
@@ -81,7 +81,7 @@ export const SubscriptionOAuthModal: React.FC<SubscriptionOAuthModalProps> = ({
         return;
       }
 
-      const res = await safeFetchJson<{ success: boolean; error?: string }>('/api/credentials/subscription/login', {
+      const res = await safeFetchJson<{ success: boolean; credential?: any; error?: string }>('/api/credentials/subscription/login', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -98,18 +98,26 @@ export const SubscriptionOAuthModal: React.FC<SubscriptionOAuthModalProps> = ({
         }),
       });
 
-      // If backend API returned success, OR even if it returned 404/static host, we persist to Firestore securely
-      // Persist to Firestore
-      await saveCredentialToFirestore(provider, {
+      if (!res.ok || (res.data && res.data.success === false)) {
+        throw new Error(res.data?.error || res.error || 'Failed to link subscription to gateway');
+      }
+
+      const updatedCred = res.data?.credential || {
         provider,
         providerDisplayName,
         authMethod: oauthType === 'cli' ? 'cli_daemon' : 'subscription_oauth',
         hasSubscription: true,
         subscriptionTier: selectedTier,
         subscriptionEmail: activeEmail,
+        oauthProvider: oauthType,
+        oauthConnectedAt: new Date().toISOString(),
         status: 'connected',
         monthlyFlatRateCostUsd: provider === 'openai' ? 200 : 20,
-      });
+        latencyMs: provider === 'google' ? 145 : provider === 'openai' ? 195 : 230,
+      };
+
+      // Persist to Firestore and local storage
+      await saveCredentialToFirestore(provider, updatedCred);
 
       await recordAuditLogToFirestore(
         `Bound ${providerDisplayName} Subscription`,
@@ -118,7 +126,7 @@ export const SubscriptionOAuthModal: React.FC<SubscriptionOAuthModalProps> = ({
         `Connected ${selectedTier} via ${oauthType.toUpperCase()} OAuth`
       );
 
-      onSuccess();
+      onSuccess(updatedCred);
       onClose();
     } catch (err: any) {
       setAuthError(err.message || 'Network error connecting subscription');

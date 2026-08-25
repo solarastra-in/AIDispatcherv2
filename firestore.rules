@@ -30,7 +30,7 @@ service cloud.firestore {
     }
     function isCompanyAdminOf(companyId) {
       return isSignedIn()
-        && userDoc().data.role == 'company_admin'
+        && (userDoc().data.role == 'company_admin' || userDoc().data.role == 'corporate_admin')
         && userDoc().data.companyId == companyId;
     }
     function isMemberOf(companyId) {

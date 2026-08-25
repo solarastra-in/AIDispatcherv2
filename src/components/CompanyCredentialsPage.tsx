@@ -50,6 +50,7 @@ import { LowBalanceToast, LowBalanceAlert } from './LowBalanceToast';
 import ProviderConnectPanel from './ProviderConnectPanel';
 import { useAuth } from '../lib/useAuth';
 import { authedFetch, safeFetchJson } from '../lib/firebaseClient';
+import { loadAllCredentialsFromFirestore } from '../lib/firebase';
 import { AuthGateModal } from './AuthGateModal';
 
 interface ProviderConfigMeta {
@@ -241,6 +242,21 @@ export const CompanyCredentialsPage: React.FC<CompanyCredentialsPageProps> = ({
   const [oauthModalProvider, setOauthModalProvider] = useState<AIProvider | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
+  // Custom in-app confirmation modal (replaces window.confirm for sandbox safety)
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    description: string;
+    confirmText: string;
+    onConfirm: () => Promise<void> | void;
+  }>({
+    isOpen: false,
+    title: '',
+    description: '',
+    confirmText: 'Confirm',
+    onConfirm: () => {}
+  });
+
   const requireAuthGuard = (actionName: string): boolean => {
     if (!isAuthenticated) {
       setNotification({
@@ -261,18 +277,38 @@ export const CompanyCredentialsPage: React.FC<CompanyCredentialsPageProps> = ({
   const loadData = async () => {
     try {
       setIsLoading(true);
-      const [profileRes, credsRes, gatewayRes] = await Promise.all([
+      const [profileRes, credsRes, gatewayRes, firestoreCreds] = await Promise.all([
         safeFetchJson('/api/credentials/profile'),
         safeFetchJson('/api/credentials'),
         safeFetchJson('/api/credentials/subscription/gateway-status'),
+        loadAllCredentialsFromFirestore().catch(() => ({})),
       ]);
 
       const profileData = profileRes.data;
-      const credsData = credsRes.data;
+      const apiCreds = (credsRes.data as any) || {};
       const gatewayData = gatewayRes.data;
 
+      const mergedCreds: Record<string, any> = { ...apiCreds };
+
+      // Synchronize with local / Firestore persisted credentials
+      if (firestoreCreds && typeof firestoreCreds === 'object') {
+        Object.entries(firestoreCreds).forEach(([prov, fCred]: [string, any]) => {
+          if (fCred && (fCred.hasSubscription || fCred.hasKey || fCred.status === 'connected' || fCred.apiKey)) {
+            mergedCreds[prov] = {
+              ...(mergedCreds[prov] || {}),
+              ...fCred,
+              status: fCred.status || (fCred.hasSubscription || fCred.hasKey ? 'connected' : mergedCreds[prov]?.status || 'unconfigured'),
+              hasSubscription: fCred.hasSubscription !== undefined ? Boolean(fCred.hasSubscription) : Boolean(mergedCreds[prov]?.hasSubscription),
+              subscriptionTier: fCred.subscriptionTier || mergedCreds[prov]?.subscriptionTier,
+              subscriptionEmail: fCred.subscriptionEmail || mergedCreds[prov]?.subscriptionEmail,
+              authMethod: fCred.authMethod || mergedCreds[prov]?.authMethod,
+            };
+          }
+        });
+      }
+
       setProfile(profileData || null);
-      setCredentials((credsData as any) || {});
+      setCredentials(mergedCreds);
       setGatewayConfig(gatewayData as any);
 
       // Pre-fill inputs & Evaluate Low Balance Quota Alerts
@@ -282,8 +318,8 @@ export const CompanyCredentialsPage: React.FC<CompanyCredentialsPageProps> = ({
       const initialThresholds: Record<string, string> = {};
       const detectedAlerts: LowBalanceAlert[] = [];
 
-      if (credsData && typeof credsData === 'object') {
-        Object.entries(credsData).forEach(([prov, c]: [string, any]) => {
+      if (mergedCreds && typeof mergedCreds === 'object') {
+        Object.entries(mergedCreds).forEach(([prov, c]: [string, any]) => {
           if (c?.baseUrl) initialBaseUrls[prov] = c.baseUrl;
           if (c?.organizationId) initialOrgs[prov] = c.organizationId;
           if (c?.monthlySpendLimitUsd) initialSpendLimits[prov] = String(c.monthlySpendLimitUsd);
@@ -547,51 +583,63 @@ export const CompanyCredentialsPage: React.FC<CompanyCredentialsPageProps> = ({
   };
 
   // Disconnect Subscription
-  const handleDisconnectSubscription = async (provider: AIProvider) => {
+  const handleDisconnectSubscription = (provider: AIProvider) => {
     if (!requireAuthGuard('unlinking subscription session')) return;
-    if (!confirm(`Unlink subscription session for ${provider.toUpperCase()}?`)) return;
-
-    try {
-      const res = await safeFetchJson<{ success: boolean; message?: string; error?: string }>('/api/credentials/subscription/disconnect', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider }),
-      });
-      const data = res.data;
-      if (res.ok && data?.success) {
-        setNotification({ type: 'success', message: data.message || 'Subscription disconnected' });
-        await loadData();
-      } else {
-        setNotification({ type: 'error', message: data?.error || res.error || 'Failed to unlink subscription' });
+    setConfirmDialog({
+      isOpen: true,
+      title: `Unlink ${provider.toUpperCase()} Subscription`,
+      description: `Are you sure you want to disconnect and unlink the active subscription session for ${provider.toUpperCase()}?`,
+      confirmText: 'Unlink Session',
+      onConfirm: async () => {
+        try {
+          const res = await safeFetchJson<{ success: boolean; message?: string; error?: string }>('/api/credentials/subscription/disconnect', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider }),
+          });
+          const data = res.data;
+          if (res.ok && data?.success) {
+            setNotification({ type: 'success', message: data.message || 'Subscription disconnected' });
+            await loadData();
+          } else {
+            setNotification({ type: 'error', message: data?.error || res.error || 'Failed to unlink subscription' });
+          }
+        } catch (err: any) {
+          setNotification({ type: 'error', message: 'Failed to unlink subscription: ' + err.message });
+        }
       }
-    } catch (err: any) {
-      setNotification({ type: 'error', message: 'Failed to unlink subscription: ' + err.message });
-    }
+    });
   };
 
   // Delete Credential
-  const handleDelete = async (provider: AIProvider) => {
+  const handleDelete = (provider: AIProvider) => {
     if (!requireAuthGuard('deleting BYOK credentials')) return;
-    if (!confirm(`Remove credentials for ${provider.toUpperCase()} from your company vault?`)) return;
+    setConfirmDialog({
+      isOpen: true,
+      title: `Remove ${provider.toUpperCase()} API Key`,
+      description: `Are you sure you want to remove credentials for ${provider.toUpperCase()} from your company vault?`,
+      confirmText: 'Remove Credentials',
+      onConfirm: async () => {
+        try {
+          const res = await safeFetchJson<{ success: boolean; message?: string; error?: string }>('/api/credentials/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider }),
+          });
 
-    try {
-      const res = await safeFetchJson<{ success: boolean; message?: string; error?: string }>('/api/credentials/delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider }),
-      });
-
-      const data = res.data;
-      if (res.ok && data?.success) {
-        setNotification({ type: 'success', message: data.message || 'Credential deleted' });
-        setKeyInputs(prev => ({ ...prev, [provider]: '' }));
-        await loadData();
-      } else {
-        setNotification({ type: 'error', message: data?.error || res.error || 'Failed to delete credential' });
+          const data = res.data;
+          if (res.ok && data?.success) {
+            setNotification({ type: 'success', message: data.message || 'Credential deleted' });
+            setKeyInputs(prev => ({ ...prev, [provider]: '' }));
+            await loadData();
+          } else {
+            setNotification({ type: 'error', message: data?.error || res.error || 'Failed to delete credential' });
+          }
+        } catch (err: any) {
+          setNotification({ type: 'error', message: 'Failed to remove credential: ' + err.message });
+        }
       }
-    } catch (err: any) {
-      setNotification({ type: 'error', message: 'Failed to remove credential: ' + err.message });
-    }
+    });
   };
 
   // Execute Direct Test Prompt in Sandbox
@@ -1682,8 +1730,32 @@ export const CompanyCredentialsPage: React.FC<CompanyCredentialsPageProps> = ({
           provider={oauthModalProvider}
           providerDisplayName={PROVIDER_METAS.find(m => m.id === oauthModalProvider)?.name || oauthModalProvider}
           defaultEmail={profile?.primaryContactEmail || 'solarastra.in@gmail.com'}
-          onSuccess={() => {
-            setNotification({ type: 'success', message: `Subscription for ${oauthModalProvider.toUpperCase()} connected successfully.` });
+          onSuccess={(updatedCred) => {
+            const currentProvider = oauthModalProvider;
+            const updated = updatedCred || {
+              provider: currentProvider,
+              providerDisplayName: PROVIDER_METAS.find(m => m.id === currentProvider)?.name || currentProvider,
+              hasSubscription: true,
+              subscriptionTier: 'Claude 3.7 Max / CLI Unlimited ($20/mo Flat)',
+              subscriptionEmail: profile?.primaryContactEmail || 'solarastra.in@gmail.com',
+              status: 'connected',
+              authMethod: 'subscription_oauth',
+              monthlyFlatRateCostUsd: 20,
+              latencyMs: 180,
+            };
+            if (currentProvider) {
+              setCredentials(prev => ({
+                ...prev,
+                [currentProvider]: {
+                  ...(prev[currentProvider] || {}),
+                  ...updated,
+                  hasSubscription: true,
+                  status: 'connected',
+                }
+              }));
+              setProviderModeTab(prev => ({ ...prev, [currentProvider]: 'subscription' }));
+              setNotification({ type: 'success', message: `Subscription for ${currentProvider.toUpperCase()} connected successfully.` });
+            }
             loadData();
           }}
         />
@@ -1710,6 +1782,48 @@ export const CompanyCredentialsPage: React.FC<CompanyCredentialsPageProps> = ({
           loadData();
         }}
       />
+
+      {/* CUSTOM IN-APP CONFIRMATION MODAL (SANDBOX SAFE) */}
+      {confirmDialog.isOpen && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-slate-900 border border-white/20 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center">
+                <AlertCircle className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">{confirmDialog.title}</h3>
+                <p className="text-xs text-slate-400">Action requires confirmation</p>
+              </div>
+            </div>
+
+            <p className="text-sm text-slate-300 leading-relaxed bg-slate-950/60 p-3.5 rounded-xl border border-white/5 font-mono">
+              {confirmDialog.description}
+            </p>
+
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-white/10">
+              <button
+                type="button"
+                onClick={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const fn = confirmDialog.onConfirm;
+                  setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+                  await fn();
+                }}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-lg shadow-rose-600/30 transition-all cursor-pointer"
+              >
+                {confirmDialog.confirmText}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

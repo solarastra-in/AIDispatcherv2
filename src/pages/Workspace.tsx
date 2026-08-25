@@ -9,7 +9,7 @@ import CorroboratePanel from "../components/CorroboratePanel";
 import RelayPanel from "../components/RelayPanel";
 import FileUploadZone, { type UploadedFile, readAsBase64 } from "../components/FileUploadZone";
 import PreprocessingToggle from "../components/PreprocessingToggle";
-import { authedFetch, auth } from "../lib/firebaseClient";
+import { authedFetch, safeFetchJson, auth } from "../lib/firebaseClient";
 import { 
   MessageSquare, 
   Sparkles, 
@@ -93,11 +93,10 @@ export default function Workspace({
   // Fetch daily limit quota status
   const fetchQuotaStatus = () => {
     if (auth.currentUser) {
-      authedFetch('/api/user/daily-limit-status')
-        .then(res => res.json())
-        .then(data => {
-          if (data && typeof data.dailyFreePromptLimit === 'number') {
-            setDailyQuotaInfo(data);
+      safeFetchJson<any>('/api/user/daily-limit-status')
+        .then(res => {
+          if (res.ok && res.data && typeof res.data.dailyPromptLimit === 'number') {
+            setDailyQuotaInfo(res.data);
             window.dispatchEvent(new CustomEvent('daily-quota-updated'));
           }
         })

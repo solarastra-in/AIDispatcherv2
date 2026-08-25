@@ -255,6 +255,7 @@ export const EmailTemplateEditor: React.FC<EmailTemplateEditorProps> = ({
             customHtml: renderedHtml,
             customText: renderedText,
             sentBy: `SuperAdmin (${currentUserEmail})`,
+            variables: dynamicVariables,
           }),
         });
         if (res.headers.get('content-type')?.includes('application/json')) {

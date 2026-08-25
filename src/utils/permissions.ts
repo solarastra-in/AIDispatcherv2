@@ -137,9 +137,40 @@ export const ROLE_DEFINITIONS: Record<UserRole, RolePermissionSpec> = {
   },
   team_admin: {
     role: 'team_admin',
-    label: 'Team / Company Admin',
+    label: 'Team Lead / Manager',
     badgeColor: 'bg-cyan-500/20 text-cyan-300 border-cyan-400/30',
-    description: 'Company engineering manager with full seat provisioning, budget enforcement, and BYOK control.',
+    description: 'Team engineering lead with team member management and department quota controls.',
+    allowedPages: ['home', 'how-it-works', 'capabilities', 'examples', 'pricing', 'contact', 'research', 'dispatch', 'workspace', 'quality', 'catalog', 'ledger', 'analytics', 'credentials', 'teams'],
+    allowedCapabilities: [
+      'view_marketing',
+      'view_dispatch_console',
+      'submit_dispatch',
+      'view_workspace',
+      'submit_workspace_message',
+      'select_model_manually',
+      'select_engine_manually',
+      'view_model_catalog',
+      'view_context_ledger',
+      'manage_context_ledger',
+      'view_analytics',
+      'view_credentials',
+      'manage_credentials',
+      'view_team_governance',
+      'manage_team_members',
+      'manage_team_budgets',
+    ],
+    submissionRules: {
+      canDispatch: true,
+      canManageBYOK: true,
+      canManageTeam: true,
+      canAccessSuperAdmin: false,
+    },
+  },
+  corporate_admin: {
+    role: 'corporate_admin',
+    label: 'Corporate Admin',
+    badgeColor: 'bg-purple-500/20 text-purple-300 border-purple-400/30',
+    description: 'Company / Corporate administrator with full authority to provision teams, configure enterprise BYOK, set spend budgets, and invite engineers.',
     allowedPages: ['home', 'how-it-works', 'capabilities', 'examples', 'pricing', 'contact', 'research', 'dispatch', 'workspace', 'quality', 'catalog', 'ledger', 'analytics', 'credentials', 'teams'],
     allowedCapabilities: [
       'view_marketing',
@@ -217,9 +248,9 @@ export function canUserViewPage(tabId: string, persona: UserPersona, userEmail?:
     return isSuperEmail || persona.role === 'platform_admin';
   }
 
-  // Team & Governance is limited to team_member, team_admin, platform_admin
+  // Team & Governance is limited to team_member, team_admin, corporate_admin, platform_admin
   if (tabId === 'teams') {
-    return persona.role === 'team_admin' || persona.role === 'team_member' || persona.role === 'platform_admin' || !!persona.isCompanyAdmin;
+    return persona.role === 'team_admin' || persona.role === 'corporate_admin' || persona.role === 'team_member' || persona.role === 'platform_admin' || !!persona.isCompanyAdmin;
   }
 
   // Workspace Studio requires authenticated status

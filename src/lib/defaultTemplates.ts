@@ -351,16 +351,113 @@ Review audit ledger: {{action_url}}
 WhyOr Dispatch AI Enterprise • SuperAdmin: solarastra.in@gmail.com`,
   },
 
+  company_onboarded: {
+    id: 'company_onboarded',
+    name: 'Company Provisioning & Enterprise Workspace Onboarding',
+    category: 'onboarding',
+    description: 'Welcome and provisioning statement sent to company admins when a new company/customer tenant is registered.',
+    subject: '🏢 [WhyOr Dispatch] Enterprise Provisioned: {{company_name}} - Quota & Workspace Credentials',
+    variables: [
+      '{{recipient_name}}',
+      '{{recipient_email}}',
+      '{{company_name}}',
+      '{{allocated_tokens}}',
+      '{{budget_limit}}',
+      '{{routing_priority}}',
+      '{{tenant_domain}}',
+      '{{authorized_models}}',
+      '{{login_url}}',
+      '{{timestamp}}',
+      '{{custom_message}}',
+    ],
+    htmlBody: `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #0f172a; color: #f8fafc; border-radius: 16px; border: 1px solid #334155; overflow: hidden; padding: 28px;">
+  <!-- Header -->
+  <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #1e293b; padding-bottom: 16px; margin-bottom: 24px;">
+    <div style="font-size: 20px; font-weight: 800; color: #818cf8; letter-spacing: -0.5px;">⚡ WhyOr Dispatch AI</div>
+    <span style="background-color: rgba(52, 211, 153, 0.15); color: #34d399; border: 1px solid rgba(52, 211, 153, 0.3); font-size: 11px; padding: 4px 10px; border-radius: 9999px; font-weight: 700; text-transform: uppercase;">
+      Enterprise Tenant Provisioned
+    </span>
+  </div>
+
+  <!-- Body Content -->
+  <div style="font-size: 14px; line-height: 1.6; color: #cbd5e1;">
+    <p style="margin-top: 0;">Hello <strong>{{recipient_name}}</strong>,</p>
+    <p>Your enterprise workspace for <strong>{{company_name}}</strong> has been successfully provisioned on <strong>WhyOr Dispatch AI</strong>. All engineering teams within your organization can now route models with <strong>$0.00 token markup</strong> using unified flat-rate sessions and BYOK keys.</p>
+
+    <!-- Provisioning Specs Box -->
+    <div style="background-color: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 18px; margin: 20px 0;">
+      <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #334155;">
+        <span style="color: #94a3b8; font-size: 12px;">Organization:</span>
+        <span style="font-weight: 700; color: #f8fafc; font-size: 12px; font-family: monospace;">{{company_name}}</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #334155;">
+        <span style="color: #94a3b8; font-size: 12px;">Domain / Tenant:</span>
+        <span style="font-weight: 600; color: #38bdf8; font-size: 12px; font-family: monospace;">{{tenant_domain}}</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #334155;">
+        <span style="color: #94a3b8; font-size: 12px;">Monthly Token Quota:</span>
+        <span style="font-weight: 700; color: #34d399; font-size: 12px; font-family: monospace;">{{allocated_tokens}}</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #334155;">
+        <span style="color: #94a3b8; font-size: 12px;">Monthly Budget Cap:</span>
+        <span style="font-weight: 700; color: #fbbf24; font-size: 12px; font-family: monospace;">{{budget_limit}}</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #334155;">
+        <span style="color: #94a3b8; font-size: 12px;">Routing Priority:</span>
+        <span style="font-weight: 600; color: #a855f7; font-size: 12px; font-family: monospace;">{{routing_priority}}</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; padding: 6px 0;">
+        <span style="color: #94a3b8; font-size: 12px;">Model Access:</span>
+        <span style="font-weight: 600; color: #f8fafc; font-size: 12px; font-family: monospace;">{{authorized_models}}</span>
+      </div>
+    </div>
+
+    <p style="font-size: 13px; color: #94a3b8;">
+      {{custom_message}}
+    </p>
+
+    <!-- CTA Button -->
+    <div style="text-align: center; margin: 28px 0 16px 0;">
+      <a href="{{login_url}}" style="display: inline-block; background-color: #6366f1; color: #ffffff; text-decoration: none; font-size: 13px; font-weight: 700; padding: 12px 24px; border-radius: 10px; box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);">
+        Access Enterprise Portal &rarr;
+      </a>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div style="margin-top: 28px; border-top: 1px solid #1e293b; padding-top: 16px; font-size: 11px; color: #64748b; text-align: center;">
+    WhyOr Dispatch AI Enterprise • SuperAdmin: solarastra.in@gmail.com • {{timestamp}}
+  </div>
+</div>`,
+    textBody: `[WhyOr Dispatch] Enterprise Provisioned: {{company_name}}
+
+Hello {{recipient_name}},
+
+Your enterprise workspace for {{company_name}} has been provisioned on WhyOr Dispatch AI.
+- Monthly Quota: {{allocated_tokens}}
+- Budget Limit: {{budget_limit}}
+- Routing Priority: {{routing_priority}}
+- Models: {{authorized_models}}
+
+{{custom_message}}
+
+Sign in to Portal: {{login_url}}
+
+--
+WhyOr Dispatch AI Enterprise • SuperAdmin: solarastra.in@gmail.com • {{timestamp}}`,
+  },
+
   onboarding_invite: {
     id: 'onboarding_invite',
     name: 'Team Member Onboarding & Model Access Grant',
     category: 'onboarding',
     description: 'Welcome email sent to newly invited developers or team members with allocated model quotas.',
-    subject: '✨ [WhyOr Dispatch] Welcome to {{company_name}} AI Gateway - Access Credentials & Quota',
+    subject: '✨ [WhyOr Dispatch] Welcome {{recipient_name}} to {{company_name}} - Model Credentials & Quota',
     variables: [
       '{{recipient_name}}',
       '{{recipient_email}}',
       '{{company_name}}',
+      '{{team_name}}',
       '{{role}}',
       '{{allocated_tokens}}',
       '{{authorized_models}}',
@@ -380,10 +477,14 @@ WhyOr Dispatch AI Enterprise • SuperAdmin: solarastra.in@gmail.com`,
   <!-- Body Content -->
   <div style="font-size: 14px; line-height: 1.6; color: #cbd5e1;">
     <p style="margin-top: 0;">Hello <strong>{{recipient_name}}</strong>,</p>
-    <p>You have been granted access to the <strong>WhyOr Dispatch AI Enterprise Gateway</strong> for <strong>{{company_name}}</strong> by SuperAdmin <strong>solarastra.in@gmail.com</strong>.</p>
+    <p>You have been granted access to the <strong>WhyOr Dispatch AI Enterprise Gateway</strong> for <strong>{{company_name}}</strong> under the <strong>{{team_name}}</strong> workspace.</p>
 
     <!-- Access Credentials Box -->
     <div style="background-color: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 18px; margin: 20px 0;">
+      <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #334155;">
+        <span style="color: #94a3b8; font-size: 12px;">Organization & Team:</span>
+        <span style="font-weight: 700; color: #f8fafc; font-size: 12px; font-family: monospace;">{{company_name}} &bull; {{team_name}}</span>
+      </div>
       <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #334155;">
         <span style="color: #94a3b8; font-size: 12px;">Assigned Role:</span>
         <span style="font-weight: 700; color: #a855f7; font-size: 12px; font-family: monospace;">{{role}}</span>
@@ -423,10 +524,93 @@ WhyOr Dispatch AI Enterprise • SuperAdmin: solarastra.in@gmail.com`,
 
 Hello {{recipient_name}},
 
-You have been granted access to WhyOr Dispatch AI Enterprise:
+You have been granted access to WhyOr Dispatch AI Enterprise for {{company_name}} under {{team_name}}:
 - Role: {{role}}
 - Allocated Tokens: {{allocated_tokens}}
 - Authorized Models: {{authorized_models}}
+
+{{custom_message}}
+
+Sign in: {{login_url}}
+
+--
+WhyOr Dispatch AI Enterprise • SuperAdmin: solarastra.in@gmail.com`,
+  },
+
+  admin_privilege_grant: {
+    id: 'admin_privilege_grant',
+    name: 'Administrator Privileges & RBAC Role Grant',
+    category: 'security',
+    description: 'Triggered when administrative privileges, role tiers, or company governance rights are updated.',
+    subject: '🛡️ [WhyOr Security] Administrator Privileges Updated: {{role}} ({{company_name}})',
+    variables: [
+      '{{recipient_name}}',
+      '{{recipient_email}}',
+      '{{company_name}}',
+      '{{role}}',
+      '{{tier_cap}}',
+      '{{active_permissions}}',
+      '{{sent_by}}',
+      '{{login_url}}',
+      '{{timestamp}}',
+      '{{custom_message}}',
+    ],
+    htmlBody: `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #0f172a; color: #f8fafc; border-radius: 16px; border: 1px solid #334155; overflow: hidden; padding: 28px;">
+  <!-- Header -->
+  <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #1e293b; padding-bottom: 16px; margin-bottom: 24px;">
+    <div style="font-size: 20px; font-weight: 800; color: #38bdf8; letter-spacing: -0.5px;">🛡️ WhyOr Security</div>
+    <span style="background-color: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); font-size: 11px; padding: 4px 10px; border-radius: 9999px; font-weight: 700; text-transform: uppercase;">
+      Privilege Update
+    </span>
+  </div>
+
+  <!-- Body Content -->
+  <div style="font-size: 14px; line-height: 1.6; color: #cbd5e1;">
+    <p style="margin-top: 0;">Dear <strong>{{recipient_name}}</strong>,</p>
+    <p>Your administrative permissions and role matrix on <strong>WhyOr Dispatch AI</strong> for <strong>{{company_name}}</strong> have been updated by SuperAdmin (<strong>{{sent_by}}</strong>).</p>
+
+    <!-- Details Box -->
+    <div style="background-color: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 18px; margin: 20px 0;">
+      <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #334155;">
+        <span style="color: #94a3b8; font-size: 12px;">Assigned Role:</span>
+        <span style="font-weight: 700; color: #38bdf8; font-size: 12px; font-family: monospace;">{{role}}</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #334155;">
+        <span style="color: #94a3b8; font-size: 12px;">Model Tier Access:</span>
+        <span style="font-weight: 600; color: #a855f7; font-size: 12px; font-family: monospace;">{{tier_cap}}</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; padding: 6px 0;">
+        <span style="color: #94a3b8; font-size: 12px;">Active Permissions:</span>
+        <span style="font-weight: 600; color: #34d399; font-size: 12px; font-family: monospace;">{{active_permissions}}</span>
+      </div>
+    </div>
+
+    <p style="font-size: 13px; color: #94a3b8;">
+      {{custom_message}}
+    </p>
+
+    <!-- CTA Button -->
+    <div style="text-align: center; margin: 28px 0 16px 0;">
+      <a href="{{login_url}}" style="display: inline-block; background-color: #0284c7; color: #ffffff; text-decoration: none; font-size: 13px; font-weight: 700; padding: 12px 24px; border-radius: 10px; box-shadow: 0 4px 14px rgba(2, 132, 199, 0.4);">
+        Open Governance Dashboard &rarr;
+      </a>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div style="margin-top: 28px; border-top: 1px solid #1e293b; padding-top: 16px; font-size: 11px; color: #64748b; text-align: center;">
+    WhyOr Dispatch AI Enterprise • SuperAdmin: solarastra.in@gmail.com • {{timestamp}}
+  </div>
+</div>`,
+    textBody: `[WhyOr Security] Administrator Privileges Updated: {{role}} ({{company_name}})
+
+Dear {{recipient_name}},
+
+Your permissions on WhyOr Dispatch AI for {{company_name}} have been updated:
+- Assigned Role: {{role}}
+- Tier Cap: {{tier_cap}}
+- Active Permissions: {{active_permissions}}
+- Authorized by: {{sent_by}}
 
 {{custom_message}}
 
@@ -542,6 +726,11 @@ export const SAMPLE_TEMPLATE_VARIABLES: Record<string, string> = {
   '{{authorized_models}}': 'Gemini 2.5 Pro, Claude 3.7 Sonnet, GPT-4.5',
   '{{login_url}}': 'https://ais-dev-gcdyq3rgswqtgkxcjbfmqt-4552824319.us-west2.run.app',
   '{{action_url}}': 'https://ais-dev-gcdyq3rgswqtgkxcjbfmqt-4552824319.us-west2.run.app',
+  '{{team_name}}': 'AI Engineering Core',
+  '{{routing_priority}}': 'Zero-Markup Flat-Rate Subscriptions',
+  '{{tenant_domain}}': 'solara.ai',
+  '{{tier_cap}}': 'Tier 3 (Reasoning & Frontier Models)',
+  '{{active_permissions}}': 'Manage Team, Dispatch Models, View Telemetry',
   '{{smtp_host}}': 'smtp.gmail.com',
   '{{smtp_port}}': '587',
   '{{sender_identity}}': 'WhyOr Dispatch AI Enterprise <solarastra.in@gmail.com>',
@@ -552,9 +741,16 @@ export const SAMPLE_TEMPLATE_VARIABLES: Record<string, string> = {
 };
 
 export function interpolateTemplate(content: string, variables: Record<string, string>): string {
+  if (!content) return '';
   let result = content;
+  
+  // Replace all given variables (handling both 'key' and '{{key}}')
   for (const [key, value] of Object.entries(variables)) {
-    result = result.replaceAll(key, value || '');
+    const formattedKey = key.startsWith('{{') && key.endsWith('}}') ? key : `{{${key}}}`;
+    result = result.replaceAll(formattedKey, value !== undefined && value !== null ? String(value) : '');
   }
+
+  // Safety cleanup: replace any lingering unreplaced {{variable_name}} with clean fallback or remove
+  result = result.replace(/\{\{[a-zA-Z0-9_-]+\}\}/g, '');
   return result;
 }

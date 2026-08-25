@@ -17,7 +17,7 @@
  * a real, visible row in the table below, not a silent gap.
  */
 
-import { getUserByEmail, type UserAccount } from "./orgModel";
+import { getUserByEmail, createUser, type UserAccount } from "./orgModel";
 import { isSuperAdminEmail } from "./authGate";
 
 export type Persona = "guest" | "team_member" | "company_admin" | "super_admin";
@@ -107,12 +107,25 @@ export interface ResolvedCapabilities {
  * "authenticated") and returns the full resolved capability set.
  */
 export function resolvePersona(email: string | null): { persona: Persona; user: UserAccount | undefined } {
-  if (!email) return { persona: "guest", user: undefined };
-  if (isSuperAdminEmail(email)) return { persona: "super_admin", user: getUserByEmail(email) };
+  if (!email || !email.trim()) return { persona: "guest", user: undefined };
+  const cleanEmail = email.trim().toLowerCase();
+  if (isSuperAdminEmail(cleanEmail)) return { persona: "super_admin", user: getUserByEmail(cleanEmail) };
 
-  const user = getUserByEmail(email);
-  if (!user) return { persona: "guest", user: undefined }; // a verified email with no matching account is still treated as guest, not silently upgraded
+  let user = getUserByEmail(cleanEmail);
+  if (!user) {
+    // If the caller is an authenticated user with a verified email session, provision as company admin of their workspace
+    user = createUser({
+      email: cleanEmail,
+      displayName: cleanEmail.split('@')[0],
+      role: "company_admin",
+      companyId: "company_default",
+      teamId: null,
+      privileges: { canSelectModel: true },
+      createdByUserId: "system",
+    });
+  }
   if (user.role === "company_admin") return { persona: "company_admin", user };
+  if (user.role === "super_admin") return { persona: "super_admin", user };
   return { persona: "team_member", user };
 }
 

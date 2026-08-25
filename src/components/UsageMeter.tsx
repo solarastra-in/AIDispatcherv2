@@ -14,7 +14,7 @@ import {
   Lock
 } from 'lucide-react';
 import { auth, onAuthChanged } from '../lib/firebase';
-import { authedFetch } from '../lib/firebaseClient';
+import { authedFetch, safeFetchJson } from '../lib/firebaseClient';
 
 export interface DailyLimitData {
   isAuthenticated: boolean;
@@ -49,13 +49,12 @@ export const UsageMeter: React.FC<UsageMeterProps> = ({
   const fetchQuotaStatus = async () => {
     try {
       setLoading(true);
-      const res = await authedFetch('/api/user/daily-limit-status');
-      if (res.ok) {
-        const data = await res.json();
-        setQuotaData(data);
+      const res = await safeFetchJson<DailyLimitData>('/api/user/daily-limit-status');
+      if (res.ok && res.data && typeof res.data.dailyPromptLimit === 'number') {
+        setQuotaData(res.data);
       }
     } catch (err) {
-      console.warn('Notice: Unable to refresh daily limit status:', err);
+      // Non-blocking quota preview error
     } finally {
       setLoading(false);
     }

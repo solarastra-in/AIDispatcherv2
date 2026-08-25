@@ -27,7 +27,9 @@ import {
   Lock,
   Eye,
   EyeOff,
-  AlertTriangle
+  AlertTriangle,
+  Crown,
+  UserCheck
 } from 'lucide-react';
 import { 
   CompanyFirestore, 
@@ -43,6 +45,7 @@ import {
   saveSmtpSettingsToFirestore,
   loadSmtpSettingsFromFirestore
 } from '../lib/firebase';
+import { CompanyAdminUser, CorporateAdminPrivileges } from '../types';
 import { resolveApiUrl } from '../lib/firebaseClient';
 import { User } from 'firebase/auth';
 
@@ -61,6 +64,33 @@ const AVAILABLE_MODELS = [
   { id: 'mistral-large-latest', name: 'Mistral Large 2 (Sovereign European AI)', tier: 'General Tier 2', provider: 'Mistral', defaultChecked: true },
 ];
 
+const DEFAULT_CORPORATE_PRIVILEGES: CorporateAdminPrivileges = {
+  // Team Creation & Hierarchy Controls
+  canCreateTeams: true,
+  maxTeamsAllowed: 10,
+  canAssignTeamLeads: true,
+  canDeleteTeams: true,
+  canSetTeamBudgets: true,
+  allowedTeamTiers: ['low', 'mid', 'high', 'frontier', 'deep_reasoning'],
+
+  // BYOK Management Controls
+  canManageBYOK: true,
+  canAddProviderKeys: true,
+  canDeleteProviderKeys: true,
+  canToggleSubscriptionFallback: true,
+  canEnforceTeamKeyInheritance: true,
+  allowedBYOKProviders: ['google', 'openai', 'anthropic', 'deepseek', 'groq', 'mistral'],
+
+  // Budget, Member & Platform Policies
+  canManageBudgets: true,
+  maxBudgetAllocatedUsd: 5000,
+  canInviteMembers: true,
+  canConfigureRouting: true,
+  canViewTelemetry: true,
+  canManageSmtpAlerts: true,
+  canManageCompanyProfile: true,
+};
+
 const DEFAULT_COMPANIES: CompanyFirestore[] = [
   {
     id: 'comp_solarastra',
@@ -76,6 +106,44 @@ const DEFAULT_COMPANIES: CompanyFirestore[] = [
     routingPriority: 'subscription_first',
     smtpAlertsEnabled: true,
     superAdminEmail: 'solarastra.in@gmail.com',
+    companyAdminEmail: 'elena.rostova@solarastra.in',
+    companyAdmins: [
+      {
+        id: 'admin_elena_01',
+        name: 'Elena Rostova',
+        email: 'elena.rostova@solarastra.in',
+        role: 'corporate_admin',
+        title: 'Director of AI Engineering & Infrastructure',
+        tierCap: 'Frontier Tier 3',
+        monthlyTokenQuota: 50_000_000,
+        monthlyTokensUsed: 3_200_000,
+        privileges: {
+          canCreateTeams: true,
+          maxTeamsAllowed: 10,
+          canAssignTeamLeads: true,
+          canDeleteTeams: true,
+          canSetTeamBudgets: true,
+          allowedTeamTiers: ['low', 'mid', 'high', 'frontier', 'deep_reasoning'],
+          canManageBYOK: true,
+          canAddProviderKeys: true,
+          canDeleteProviderKeys: true,
+          canToggleSubscriptionFallback: true,
+          canEnforceTeamKeyInheritance: true,
+          allowedBYOKProviders: ['google', 'openai', 'anthropic', 'deepseek', 'groq', 'mistral'],
+          canManageBudgets: true,
+          maxBudgetAllocatedUsd: 5000,
+          canInviteMembers: true,
+          canConfigureRouting: true,
+          canViewTelemetry: true,
+          canManageSmtpAlerts: true,
+          canManageCompanyProfile: true,
+        },
+        status: 'active',
+        assignedBy: 'solarastra.in@gmail.com',
+        assignedAt: '2025-01-15T00:00:00.000Z',
+        lastActiveAt: '2025-02-24T10:30:00.000Z',
+      }
+    ],
     status: 'active',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -132,7 +200,20 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
   const [showOnboardCompanyModal, setShowOnboardCompanyModal] = useState<boolean>(false);
   const [showAddTeamModal, setShowAddTeamModal] = useState<boolean>(false);
   const [showInviteMemberModal, setShowInviteMemberModal] = useState<boolean>(false);
+  const [showCorpAdminModal, setShowCorpAdminModal] = useState<boolean>(false);
   const [activeTeamForInvite, setActiveTeamForInvite] = useState<TeamFirestore | null>(null);
+
+  // Corporate Admin Modal State
+  const [editingCorpAdmin, setEditingCorpAdmin] = useState<CompanyAdminUser | null>(null);
+  const [corpAdminName, setCorpAdminName] = useState<string>('');
+  const [corpAdminEmail, setCorpAdminEmail] = useState<string>('');
+  const [corpAdminTitle, setCorpAdminTitle] = useState<string>('Director of AI Infrastructure');
+  const [corpAdminTierCap, setCorpAdminTierCap] = useState<string>('Frontier Tier 3');
+  const [corpAdminQuota, setCorpAdminQuota] = useState<number>(50_000_000);
+  const [corpAdminPrivileges, setCorpAdminPrivileges] = useState<CorporateAdminPrivileges>(DEFAULT_CORPORATE_PRIVILEGES);
+  const [corpAdminSendEmail, setCorpAdminSendEmail] = useState<boolean>(true);
+  const [isSubmittingCorpAdmin, setIsSubmittingCorpAdmin] = useState<boolean>(false);
+  const [dispatchingCorpAdminEmail, setDispatchingCorpAdminEmail] = useState<string | null>(null);
 
   // New Company Form State
   const [newCompanyName, setNewCompanyName] = useState<string>('');
@@ -151,6 +232,14 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
     'deepseek-reasoner'
   ]);
   const [newCompanySmtpAlerts, setNewCompanySmtpAlerts] = useState<boolean>(true);
+  const [isSubmittingCompany, setIsSubmittingCompany] = useState<boolean>(false);
+
+  // Initial Corporate Admin during New Company Creation
+  const [provisionInitialCorpAdmin, setProvisionInitialCorpAdmin] = useState<boolean>(true);
+  const [newCorpAdminName, setNewCorpAdminName] = useState<string>('Elena Rostova');
+  const [newCorpAdminEmail, setNewCorpAdminEmail] = useState<string>('elena.admin@solarastra.in');
+  const [newCorpAdminTitle, setNewCorpAdminTitle] = useState<string>('Director of AI Engineering');
+  const [newCorpAdminPrivileges, setNewCorpAdminPrivileges] = useState<CorporateAdminPrivileges>(DEFAULT_CORPORATE_PRIVILEGES);
 
   // New Team Form State
   const [newTeamName, setNewTeamName] = useState<string>('');
@@ -195,6 +284,21 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
   const [isSavingQuickSmtp, setIsSavingQuickSmtp] = useState<boolean>(false);
   const [isTestingSmtp, setIsTestingSmtp] = useState<boolean>(false);
   const [quickSmtpNotice, setQuickSmtpNotice] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+
+  // Custom in-app confirmation modal (replaces window.confirm for iframe sandbox safety)
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    description: string;
+    confirmText: string;
+    onConfirm: () => Promise<void> | void;
+  }>({
+    isOpen: false,
+    title: '',
+    description: '',
+    confirmText: 'Confirm',
+    onConfirm: () => {}
+  });
 
   // Fetch initial data from Firestore & SMTP status
   useEffect(() => {
@@ -275,16 +379,45 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
     }
   };
 
-  // Create Company Handler
+  // Create Company Handler with Optimistic UI & Rollback on duplicate / error
   const handleOnboardCompanySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newCompanyName.trim()) return;
+    if (!newCompanyName.trim() || isSubmittingCompany) return;
 
+    const trimmedName = newCompanyName.trim();
+    const trimmedDomain = newCompanyDomain.trim() || 'enterprise.ai';
+
+    // Snapshot current state for rollback mechanism
+    const previousCompanies = [...companies];
+    const previousSelectedCompanyId = selectedCompanyId;
+
+    setIsSubmittingCompany(true);
     const companyId = `comp_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
+    
+    // Build initial corporate admin user if provisioned
+    const initialAdmins: CompanyAdminUser[] = [];
+    if (provisionInitialCorpAdmin && newCorpAdminEmail.trim()) {
+      initialAdmins.push({
+        id: `admin_corp_${Date.now().toString(36)}`,
+        name: newCorpAdminName.trim() || `${trimmedName} Admin`,
+        email: newCorpAdminEmail.trim().toLowerCase(),
+        role: 'corporate_admin',
+        title: newCorpAdminTitle.trim() || 'Director of AI Engineering',
+        tierCap: 'Frontier Tier 3',
+        monthlyTokenQuota: Number(newCompanyQuota),
+        monthlyTokensUsed: 0,
+        privileges: newCorpAdminPrivileges,
+        status: 'active',
+        assignedBy: currentUser?.email || 'solarastra.in@gmail.com',
+        assignedAt: new Date().toISOString(),
+        lastActiveAt: new Date().toISOString(),
+      });
+    }
+
     const newCompany: CompanyFirestore = {
       id: companyId,
-      name: newCompanyName.trim(),
-      domain: newCompanyDomain.trim() || 'enterprise.ai',
+      name: trimmedName,
+      domain: trimmedDomain,
       industry: newCompanyIndustry,
       tier: newCompanyTier,
       billingEmail: newCompanyBillingEmail.trim() || (currentUser?.email || 'solarastra.in@gmail.com'),
@@ -295,58 +428,350 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
       routingPriority: newCompanyRouting,
       smtpAlertsEnabled: newCompanySmtpAlerts,
       superAdminEmail: currentUser?.email || 'solarastra.in@gmail.com',
+      companyAdminEmail: initialAdmins[0]?.email || newCompanyBillingEmail.trim(),
+      companyAdmins: initialAdmins,
       status: 'active',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
 
+    // 1. Optimistically update client-side UI immediately
+    setCompanies([newCompany, ...previousCompanies.filter(c => c.id !== companyId)]);
+    setSelectedCompanyId(companyId);
+    setShowOnboardCompanyModal(false);
+    setNotice({
+      type: 'info',
+      text: `Optimistically adding customer '${newCompany.name}' with Delegated Corporate Admin... Verifying with server registry.`
+    });
+
     try {
-      // 1. Save to state
-      setCompanies([newCompany, ...companies]);
-      setSelectedCompanyId(companyId);
+      // 2. Query Server API for verification / duplicate detection
+      let serverConfirmedDuplicate = false;
+      let serverErrorMsg = '';
 
-      // 2. Persist to Firestore
-      await saveCompanyToFirestore(newCompany);
+      try {
+        const serverRes = await fetch(resolveApiUrl('/api/admin/companies'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: newCompany.name,
+            domain: newCompany.domain,
+            ssoDomain: newCompany.domain,
+            seededGmailAddresses: [newCompany.billingEmail, ...(initialAdmins.map(a => a.email))]
+          })
+        });
 
-      // 3. Record Audit Log
+        if (serverRes.status === 409) {
+          const errorData = await serverRes.json().catch(() => ({}));
+          serverConfirmedDuplicate = true;
+          serverErrorMsg = errorData.message || errorData.error || `Duplicate company '${newCompany.name}' already exists.`;
+        } else if (!serverRes.ok && serverRes.status !== 404) {
+          const errorData = await serverRes.json().catch(() => ({}));
+          serverErrorMsg = errorData.message || errorData.error || `Server returned error ${serverRes.status}`;
+        }
+      } catch (networkErr: any) {
+        // Fallback to Firestore validation if server route not reachable
+        console.warn('Server validation notice:', networkErr?.message || networkErr);
+      }
+
+      if (serverConfirmedDuplicate) {
+        throw new Error(`DUPLICATE_CONFIRMED: ${serverErrorMsg}`);
+      }
+
+      // 3. Persist to Firestore with duplicate validation check
+      await saveCompanyToFirestore(newCompany, { checkDuplicates: true });
+
+      // 4. Record Audit Log
       await recordAuditLogToFirestore(
         'Onboard Company',
         'onboarding',
         currentUser?.email || 'solarastra.in@gmail.com',
-        `Onboarded company '${newCompany.name}' (${newCompany.domain}) with ${newCompany.monthlyTokenQuota.toLocaleString()} token cap & $${newCompany.monthlyBudgetUsd} budget.`
+        `Onboarded company '${newCompany.name}' (${newCompany.domain}) with Corporate Admin '${initialAdmins[0]?.email || 'None'}' and ${newCompany.monthlyTokenQuota.toLocaleString()} token cap.`
       );
 
-      // 4. If SMTP alerts enabled, dispatch welcome notification
+      // 5. If SMTP alerts enabled, dispatch welcome notification to billing & corporate admin
       if (newCompanySmtpAlerts) {
-        try {
-          await fetch('/api/admin/smtp/send-test', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              to: newCompany.billingEmail,
-              subject: `[WhyOr Dispatch AI] Company Onboarded: ${newCompany.name}`,
-              templateType: 'onboarding_invite',
-              customMessage: `Company ${newCompany.name} has been successfully provisioned on WhyOr Dispatch AI by SuperAdmin ${currentUser?.email || 'solarastra.in@gmail.com'}. Allocated quota: ${newCompany.monthlyTokenQuota.toLocaleString()} tokens/mo.`,
-              sentBy: currentUser?.email || 'solarastra.in@gmail.com',
-            }),
-          });
-        } catch (mailErr) {
-          console.warn('SMTP welcome email skipped/failed:', mailErr);
-        }
+        const companyVars = {
+          '{{recipient_name}}': initialAdmins[0]?.name || newCompany.name + ' Administrator',
+          '{{recipient_email}}': initialAdmins[0]?.email || newCompany.billingEmail,
+          '{{company_name}}': newCompany.name,
+          '{{allocated_tokens}}': `${newCompany.monthlyTokenQuota.toLocaleString()} tokens / month`,
+          '{{budget_limit}}': `$${newCompany.monthlyBudgetUsd.toLocaleString()} / month`,
+          '{{tenant_domain}}': newCompany.domain,
+          '{{authorized_models}}': newCompany.allowedModels.join(', '),
+          '{{routing_priority}}': newCompany.routingPriority === 'byok_first' ? 'BYOK Dedicated Priority' : 'Zero-Markup Flat-Rate Subscriptions',
+          '{{custom_message}}': `Enterprise workspace for ${newCompany.name} has been provisioned on WhyOr Dispatch AI with delegated Corporate Admin authority.`,
+        };
+
+        const targetEmail = initialAdmins[0]?.email || newCompany.billingEmail;
+        fetch(resolveApiUrl('/api/admin/smtp/send-test'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            to: targetEmail,
+            subject: `🏢 [WhyOr Dispatch] Enterprise Provisioned: ${newCompany.name} - Quota & Workspace Credentials`,
+            templateType: 'company_onboarded',
+            recipientName: initialAdmins[0]?.name || newCompany.name + ' Administrator',
+            companyName: newCompany.name,
+            allocatedTokens: `${newCompany.monthlyTokenQuota.toLocaleString()} tokens / month`,
+            budgetLimit: `$${newCompany.monthlyBudgetUsd.toLocaleString()} / month`,
+            tenantDomain: newCompany.domain,
+            authorizedModels: newCompany.allowedModels.join(', '),
+            routingPriority: newCompany.routingPriority === 'byok_first' ? 'BYOK Dedicated Priority' : 'Zero-Markup Flat-Rate Subscriptions',
+            customMessage: `Company ${newCompany.name} has been successfully provisioned on WhyOr Dispatch AI by SuperAdmin ${currentUser?.email || 'solarastra.in@gmail.com'}. Allocated quota: ${newCompany.monthlyTokenQuota.toLocaleString()} tokens/mo.`,
+            sentBy: currentUser?.email || 'solarastra.in@gmail.com',
+            variables: companyVars,
+          }),
+        }).catch((mailErr) => console.warn('SMTP welcome email skipped/failed:', mailErr));
+      }
+
+      // 6. Final success toast
+      setNotice({
+        type: 'success',
+        text: `Customer '${newCompany.name}' and Corporate Admin '${initialAdmins[0]?.email || 'default'}' successfully provisioned.`,
+      });
+
+      // Clear input fields on confirmed success
+      setNewCompanyName('');
+      setNewCompanyDomain('');
+    } catch (err: any) {
+      // 7. ROLLBACK: Revert the visual addition immediately and display error toast
+      setCompanies(previousCompanies);
+      setSelectedCompanyId(previousSelectedCompanyId);
+      setShowOnboardCompanyModal(true); // Re-open modal to preserve user edits
+
+      const isDuplicate =
+        err?.message?.includes('DUPLICATE') ||
+        err?.message?.toLowerCase().includes('duplicate') ||
+        err?.message?.toLowerCase().includes('already exists');
+
+      const userDisplayError = isDuplicate
+        ? `Duplicate Customer Detected: ${err.message.replace(/^DUPLICATE(_CONFIRMED)?:?\s*/, '')}. Changes rolled back.`
+        : `Customer Creation Failed: ${err.message}. Changes rolled back.`;
+
+      setNotice({
+        type: 'error',
+        text: userDisplayError,
+      });
+    } finally {
+      setIsSubmittingCompany(false);
+    }
+  };
+
+  // Open Corporate Admin Modal (Create new or edit existing)
+  const handleOpenCorpAdminModal = (adminToEdit?: CompanyAdminUser) => {
+    if (adminToEdit) {
+      setEditingCorpAdmin(adminToEdit);
+      setCorpAdminName(adminToEdit.name);
+      setCorpAdminEmail(adminToEdit.email);
+      setCorpAdminTitle(adminToEdit.title || 'Director of AI Engineering');
+      setCorpAdminTierCap(adminToEdit.tierCap || 'Frontier Tier 3');
+      setCorpAdminQuota(adminToEdit.monthlyTokenQuota || 50_000_000);
+      setCorpAdminPrivileges(adminToEdit.privileges || DEFAULT_CORPORATE_PRIVILEGES);
+      setCorpAdminSendEmail(false);
+    } else {
+      setEditingCorpAdmin(null);
+      setCorpAdminName('');
+      setCorpAdminEmail('');
+      setCorpAdminTitle('Director of AI Infrastructure');
+      setCorpAdminTierCap('Frontier Tier 3');
+      setCorpAdminQuota(50_000_000);
+      setCorpAdminPrivileges(DEFAULT_CORPORATE_PRIVILEGES);
+      setCorpAdminSendEmail(true);
+    }
+    setShowCorpAdminModal(true);
+  };
+
+  // Submit Corporate Admin
+  const handleSaveCorporateAdmin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!corpAdminName.trim() || !corpAdminEmail.trim() || isSubmittingCorpAdmin) return;
+
+    setIsSubmittingCorpAdmin(true);
+    try {
+      const existingAdmins = selectedCompany.companyAdmins || [];
+      const adminId = editingCorpAdmin?.id || `admin_corp_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
+      
+      const adminObj: CompanyAdminUser = {
+        id: adminId,
+        name: corpAdminName.trim(),
+        email: corpAdminEmail.trim().toLowerCase(),
+        role: 'corporate_admin',
+        title: corpAdminTitle.trim() || 'Corporate Administrator',
+        tierCap: corpAdminTierCap,
+        monthlyTokenQuota: Number(corpAdminQuota),
+        monthlyTokensUsed: editingCorpAdmin?.monthlyTokensUsed || 0,
+        privileges: corpAdminPrivileges,
+        status: editingCorpAdmin?.status || 'active',
+        assignedBy: currentUser?.email || 'solarastra.in@gmail.com',
+        assignedAt: editingCorpAdmin?.assignedAt || new Date().toISOString(),
+        lastActiveAt: new Date().toISOString(),
+      };
+
+      const updatedAdmins = editingCorpAdmin
+        ? existingAdmins.map(a => a.id === editingCorpAdmin.id ? adminObj : a)
+        : [...existingAdmins.filter(a => a.email !== adminObj.email), adminObj];
+
+      const updatedCompany: CompanyFirestore = {
+        ...selectedCompany,
+        companyAdminEmail: updatedAdmins[0]?.email || adminObj.email,
+        companyAdmins: updatedAdmins,
+        updatedAt: new Date().toISOString(),
+      };
+
+      // 1. Update local state
+      setCompanies(companies.map(c => c.id === updatedCompany.id ? updatedCompany : c));
+      
+      // 2. Persist to Firestore
+      await saveCompanyToFirestore(updatedCompany);
+
+      // 3. Record Audit log
+      await recordAuditLogToFirestore(
+        editingCorpAdmin ? 'Update Corporate Admin' : 'Provision Corporate Admin',
+        'governance',
+        currentUser?.email || 'solarastra.in@gmail.com',
+        `${editingCorpAdmin ? 'Updated' : 'Provisioned'} Corporate Admin '${adminObj.name}' (${adminObj.email}) with delegated authority (Teams, BYOK, Budgets) for ${selectedCompany.name}.`
+      );
+
+      // 4. Send email if requested
+      if (corpAdminSendEmail) {
+        await handleSendCorporateAdminEmail(adminObj);
       }
 
       setNotice({
         type: 'success',
-        text: `Company '${newCompany.name}' onboarded successfully to Firestore Cloud Database.`,
+        text: `Corporate Admin '${adminObj.name}' (${adminObj.email}) ${editingCorpAdmin ? 'updated' : 'provisioned'} with delegated administrative authority.`,
       });
 
-      // Reset form
-      setShowOnboardCompanyModal(false);
-      setNewCompanyName('');
-      setNewCompanyDomain('');
+      setShowCorpAdminModal(false);
     } catch (err: any) {
-      setNotice({ type: 'error', text: `Failed to onboard company: ${err.message}` });
+      setNotice({ type: 'error', text: `Failed to save Corporate Admin: ${err.message}` });
+    } finally {
+      setIsSubmittingCorpAdmin(false);
     }
+  };
+
+  // Dispatch Corporate Admin Credentials / Welcome Email
+  const handleSendCorporateAdminEmail = async (admin: CompanyAdminUser) => {
+    setDispatchingCorpAdminEmail(admin.email);
+    try {
+      const quotaFormatted = (admin.monthlyTokenQuota || 50_000_000).toLocaleString() + ' tokens / month';
+      const modelsList = selectedCompany.allowedModels?.length > 0
+        ? selectedCompany.allowedModels.join(', ')
+        : 'Gemini 3.7 Flash, Claude 3.7 Sonnet, GPT-4.5, DeepSeek R1';
+
+      const privList = [];
+      if (admin.privileges.canCreateTeams) privList.push('Create & Manage Teams');
+      if (admin.privileges.canManageBYOK) privList.push('Enterprise BYOK & Provider Keys');
+      if (admin.privileges.canManageBudgets) privList.push('Budget & Spend Control');
+      if (admin.privileges.canInviteMembers) privList.push('Invite & Provision Engineers');
+      if (admin.privileges.canConfigureRouting) privList.push('Autonomous Routing Policies');
+      if (admin.privileges.canViewTelemetry) privList.push('Live Telemetry & Logs');
+
+      const adminVars = {
+        '{{recipient_name}}': admin.name,
+        '{{recipient_email}}': admin.email,
+        '{{company_name}}': selectedCompany.name,
+        '{{role}}': `Corporate Administrator (${admin.title || 'Executive Lead'})`,
+        '{{allocated_tokens}}': quotaFormatted,
+        '{{authorized_models}}': modelsList,
+        '{{tier_cap}}': admin.tierCap || 'Frontier Tier 3',
+        '{{login_url}}': 'https://ais-dev-gcdyq3rgswqtgkxcjbfmqt-4552824319.us-west2.run.app',
+        '{{timestamp}}': new Date().toLocaleString(),
+        '{{custom_message}}': `You have been appointed as Corporate Administrator for ${selectedCompany.name} by Platform SuperAdmin (${currentUser?.email || 'solarastra.in@gmail.com'}). Delegated authority: ${privList.join(', ')}. You can now provision teams, configure BYOK keys, and allocate engineering quotas with $0.00 token markup.`,
+      };
+
+      const res = await fetch(resolveApiUrl('/api/admin/smtp/send-test'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: admin.email,
+          subject: `👑 [WhyOr Dispatch] Corporate Admin Credentials: ${selectedCompany.name} Delegated Authority`,
+          templateType: 'onboarding_invite',
+          recipientName: admin.name,
+          companyName: selectedCompany.name,
+          role: `Corporate Administrator - ${admin.title || 'Director of AI'}`,
+          allocatedTokens: quotaFormatted,
+          authorizedModels: modelsList,
+          customMessage: `You have been appointed Corporate Administrator for ${selectedCompany.name}. Delegated privileges: ${privList.join(', ')}. Login at WhyOr Dispatch AI with your verified email (${admin.email}) to manage corporate teams, enterprise BYOK credentials, and developer quotas.`,
+          sentBy: `SuperAdmin (${currentUser?.email || 'solarastra.in@gmail.com'})`,
+          variables: adminVars,
+        }),
+      });
+
+      const emailData = await res.json().catch(() => ({}));
+      if (res.ok && emailData.success) {
+        await logEmailToFirestore({
+          to: admin.email,
+          from: `WhyOr Dispatch AI Enterprise <${smtpStatus?.fromEmail || 'solarastra.in@gmail.com'}>`,
+          subject: `[WhyOr Dispatch AI] Corporate Admin Credentials - ${admin.name}`,
+          emailType: 'corporate_admin_invite',
+          status: 'sent',
+          messageId: emailData.messageId,
+          sentBy: currentUser?.email || 'solarastra.in@gmail.com',
+        });
+
+        await recordAuditLogToFirestore(
+          'Dispatch Corporate Admin Invite',
+          'smtp',
+          currentUser?.email || 'solarastra.in@gmail.com',
+          `Dispatched Corporate Admin credential email to '${admin.name}' (${admin.email}) for ${selectedCompany.name}. Message-ID: ${emailData.messageId}`
+        );
+
+        setNotice({
+          type: 'success',
+          text: `Corporate Admin credentials & welcome email dispatched to ${admin.name} (${admin.email}) via SMTP (Message-ID: ${emailData.messageId}).`,
+        });
+      } else {
+        const errorMsg = emailData.error || 'SMTP server delivery failed';
+        setNotice({
+          type: 'error',
+          text: `Could not dispatch email to ${admin.email}: ${errorMsg}. Check your SMTP credentials in Settings.`,
+        });
+      }
+    } catch (err: any) {
+      setNotice({ type: 'error', text: `Email dispatch error: ${err.message}` });
+    } finally {
+      setDispatchingCorpAdminEmail(null);
+    }
+  };
+
+  // Revoke Corporate Admin Handler
+  const handleRevokeCorporateAdmin = (admin: CompanyAdminUser) => {
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Revoke Corporate Administrator',
+      description: `Are you sure you want to revoke Corporate Admin privileges for '${admin.name}' (${admin.email}) from ${selectedCompany.name}?`,
+      confirmText: 'Revoke Privileges',
+      onConfirm: async () => {
+        try {
+          const updatedAdmins = (selectedCompany.companyAdmins || []).filter(a => a.id !== admin.id);
+          const updatedCompany: CompanyFirestore = {
+            ...selectedCompany,
+            companyAdminEmail: updatedAdmins[0]?.email || '',
+            companyAdmins: updatedAdmins,
+            updatedAt: new Date().toISOString(),
+          };
+
+          setCompanies(companies.map(c => c.id === updatedCompany.id ? updatedCompany : c));
+          await saveCompanyToFirestore(updatedCompany);
+
+          await recordAuditLogToFirestore(
+            'Revoke Corporate Admin',
+            'governance',
+            currentUser?.email || 'solarastra.in@gmail.com',
+            `Revoked Corporate Admin authority for '${admin.name}' (${admin.email}) from ${selectedCompany.name}.`
+          );
+
+          setNotice({
+            type: 'info',
+            text: `Corporate Admin privileges revoked for ${admin.name}.`,
+          });
+        } catch (err: any) {
+          setNotice({ type: 'error', text: `Revocation failed: ${err.message}` });
+        }
+      }
+    });
   };
 
   // Create Team Handler
@@ -411,15 +836,43 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
   const handleSendMemberInviteEmail = async (member: any, team: TeamFirestore) => {
     setDispatchingMemberId(member.id);
     try {
+      const quotaFormatted = (member.monthlyTokenQuota || 10_000_000).toLocaleString() + ' tokens / month';
+      const modelsList = (team.allowedModels && team.allowedModels.length > 0)
+        ? team.allowedModels.join(', ')
+        : (selectedCompany.allowedModels && selectedCompany.allowedModels.length > 0)
+        ? selectedCompany.allowedModels.join(', ')
+        : 'Gemini 2.5 Pro, Claude 3.7 Sonnet, GPT-4.5, DeepSeek R1';
+
+      const memberVars = {
+        '{{recipient_name}}': member.name || member.email.split('@')[0],
+        '{{recipient_email}}': member.email,
+        '{{company_name}}': selectedCompany.name,
+        '{{team_name}}': team.name,
+        '{{role}}': member.role || 'Senior AI Developer',
+        '{{allocated_tokens}}': quotaFormatted,
+        '{{authorized_models}}': modelsList,
+        '{{tier_cap}}': member.tierCap || 'Tier 3 (Reasoning & Frontier Models)',
+        '{{login_url}}': 'https://ais-dev-gcdyq3rgswqtgkxcjbfmqt-4552824319.us-west2.run.app',
+        '{{timestamp}}': new Date().toLocaleString(),
+        '{{custom_message}}': `You have been invited to the ${team.name} team in ${selectedCompany.name}. Allocated quota: ${quotaFormatted}. Direct access to models with $0.00 token markup.`,
+      };
+
       const res = await fetch(resolveApiUrl('/api/admin/smtp/send-test'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           to: member.email,
-          subject: `[WhyOr Dispatch AI] Welcome ${member.name} - Your Enterprise Workspace Credentials`,
+          subject: `✨ [WhyOr Dispatch] Welcome ${member.name} to ${selectedCompany.name} - Model Credentials & Quota`,
           templateType: 'onboarding_invite',
-          customMessage: `You have been granted access to the ${team.name} workspace under ${selectedCompany.name}. Your monthly allowance is ${(member.monthlyTokenQuota || 10_000_000).toLocaleString()} tokens with access up to ${member.tierCap}. Authenticate with your Google account (${member.email}) at WhyOr Dispatch AI to begin executing models with zero token markup.`,
-          sentBy: `SuperAdmin: ${currentUser?.email || 'solarastra.in@gmail.com'}`,
+          recipientName: member.name || member.email.split('@')[0],
+          companyName: selectedCompany.name,
+          teamName: team.name,
+          role: member.role || 'Senior AI Developer',
+          allocatedTokens: quotaFormatted,
+          authorizedModels: modelsList,
+          customMessage: `You have been granted access to the ${team.name} workspace under ${selectedCompany.name}. Your monthly allowance is ${quotaFormatted} with access up to ${member.tierCap}. Authenticate with your Google account (${member.email}) at WhyOr Dispatch AI to begin executing models with zero token markup.`,
+          sentBy: `SuperAdmin (${currentUser?.email || 'solarastra.in@gmail.com'})`,
+          variables: memberVars,
         }),
       });
 
@@ -680,38 +1133,52 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
   };
 
   // Delete Company Handler
-  const handleDeleteCompany = async (companyId: string) => {
+  const handleDeleteCompany = (companyId: string) => {
     if (companies.length <= 1) {
-      alert('Cannot delete the last onboarded company.');
+      setNotice({ type: 'error', text: 'Cannot delete the last onboarded company.' });
       return;
     }
-    if (!confirm('Are you sure you want to delete this company and all associated team configurations?')) {
-      return;
-    }
-
-    try {
-      await deleteCompanyFromFirestore(companyId);
-      const remaining = companies.filter(c => c.id !== companyId);
-      setCompanies(remaining);
-      if (selectedCompanyId === companyId) {
-        setSelectedCompanyId(remaining[0]?.id || '');
+    const targetComp = companies.find(c => c.id === companyId);
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete Company & Teams',
+      description: `Are you sure you want to delete '${targetComp?.name || companyId}' and all associated team configurations from Firestore?`,
+      confirmText: 'Delete Company',
+      onConfirm: async () => {
+        try {
+          await deleteCompanyFromFirestore(companyId);
+          fetch(`/api/admin/companies/${companyId}`, { method: 'DELETE' }).catch(() => {});
+          const remaining = companies.filter(c => c.id !== companyId);
+          setCompanies(remaining);
+          if (selectedCompanyId === companyId) {
+            setSelectedCompanyId(remaining[0]?.id || '');
+          }
+          setNotice({ type: 'info', text: 'Company removed from Firestore registry.' });
+        } catch (err: any) {
+          setNotice({ type: 'error', text: `Delete failed: ${err.message}` });
+        }
       }
-      setNotice({ type: 'info', text: 'Company removed from Firestore registry.' });
-    } catch (err: any) {
-      setNotice({ type: 'error', text: `Delete failed: ${err.message}` });
-    }
+    });
   };
 
   // Delete Team Handler
-  const handleDeleteTeam = async (teamId: string) => {
-    if (!confirm('Are you sure you want to delete this team?')) return;
-    try {
-      await deleteTeamFromFirestore(teamId);
-      setTeams(teams.filter(t => t.id !== teamId));
-      setNotice({ type: 'info', text: 'Team removed from Firestore.' });
-    } catch (err: any) {
-      setNotice({ type: 'error', text: `Delete failed: ${err.message}` });
-    }
+  const handleDeleteTeam = (teamId: string) => {
+    const targetTeam = teams.find(t => t.id === teamId);
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete Team',
+      description: `Are you sure you want to delete team '${targetTeam?.name || teamId}'?`,
+      confirmText: 'Delete Team',
+      onConfirm: async () => {
+        try {
+          await deleteTeamFromFirestore(teamId);
+          setTeams(teams.filter(t => t.id !== teamId));
+          setNotice({ type: 'info', text: 'Team removed from Firestore.' });
+        } catch (err: any) {
+          setNotice({ type: 'error', text: `Delete failed: ${err.message}` });
+        }
+      }
+    });
   };
 
   return (
@@ -948,6 +1415,159 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
           </div>
         </div>
 
+        {/* Corporate Administrators (Delegated Authority) Section */}
+        <div className="p-4 rounded-2xl bg-gradient-to-r from-purple-950/30 via-slate-900/90 to-indigo-950/30 border border-purple-500/30 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-white/10">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-500/20 to-purple-600/30 border border-amber-400/40 flex items-center justify-center text-amber-300 shadow-sm">
+                <Crown className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h4 className="text-sm font-bold text-white tracking-wide">
+                    Corporate Administrators (Delegated Authority)
+                  </h4>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-mono uppercase bg-amber-500/20 text-amber-300 border border-amber-400/30">
+                    {(selectedCompany.companyAdmins?.length || 0)} Appointed
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400">
+                  SuperAdmin-delegated executives who can create teams, provision BYOK keys, manage departmental budgets, and invite engineers.
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => handleOpenCorpAdminModal()}
+              className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-purple-600 hover:from-amber-400 hover:to-purple-500 text-slate-950 font-bold text-xs shadow-md transition-all cursor-pointer self-start sm:self-auto"
+            >
+              <UserCheck className="w-3.5 h-3.5" />
+              <span>+ Appoint Corporate Admin</span>
+            </button>
+          </div>
+
+          {(!selectedCompany.companyAdmins || selectedCompany.companyAdmins.length === 0) ? (
+            <div className="p-4 rounded-xl bg-slate-950/60 border border-dashed border-white/10 text-center space-y-2">
+              <p className="text-xs text-slate-400">
+                No Corporate Admin has been assigned to <strong className="text-slate-200">{selectedCompany.name}</strong> yet.
+              </p>
+              <button
+                type="button"
+                onClick={() => handleOpenCorpAdminModal()}
+                className="text-xs text-purple-400 hover:text-purple-300 underline font-semibold cursor-pointer"
+              >
+                Appoint Corporate Admin with Team & BYOK Creation Privileges →
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-3">
+              {selectedCompany.companyAdmins.map((admin) => {
+                const isDispatchingThis = dispatchingCorpAdminEmail === admin.email;
+                return (
+                  <div
+                    key={admin.id}
+                    className="p-3.5 rounded-xl bg-slate-950/70 border border-white/10 hover:border-purple-500/30 transition-all flex flex-col md:flex-row md:items-center justify-between gap-3"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-purple-900/40 border border-purple-500/40 flex items-center justify-center text-purple-200 font-bold text-sm">
+                        {admin.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() || 'CA'}
+                      </div>
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-semibold text-white">{admin.name}</span>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                            {admin.title || 'Corporate Admin'}
+                          </span>
+                          <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
+                            {admin.status.toUpperCase()}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-400 font-mono">
+                          {admin.email} • Assigned by <span className="text-slate-300">{admin.assignedBy || 'SuperAdmin'}</span>
+                        </p>
+                        {/* Capability Badges */}
+                        <div className="flex flex-wrap gap-1.5 pt-1">
+                          {admin.privileges.canCreateTeams && (
+                            <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-indigo-950/70 border border-indigo-500/30 text-indigo-300">
+                              ✓ Create Teams
+                            </span>
+                          )}
+                          {admin.privileges.canManageBYOK && (
+                            <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-amber-950/70 border border-amber-500/30 text-amber-300">
+                              ✓ Enterprise BYOK
+                            </span>
+                          )}
+                          {admin.privileges.canManageBudgets && (
+                            <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-emerald-950/70 border border-emerald-500/30 text-emerald-300">
+                              ✓ Budgets & Caps
+                            </span>
+                          )}
+                          {admin.privileges.canInviteMembers && (
+                            <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-purple-950/70 border border-purple-500/30 text-purple-300">
+                              ✓ Invite Engineers
+                            </span>
+                          )}
+                          {admin.privileges.canConfigureRouting && (
+                            <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-cyan-950/70 border border-cyan-500/30 text-cyan-300">
+                              ✓ Routing Policy
+                            </span>
+                          )}
+                          {admin.privileges.canViewTelemetry && (
+                            <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-blue-950/70 border border-blue-500/30 text-blue-300">
+                              ✓ Live Telemetry
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 self-end md:self-center">
+                      <button
+                        type="button"
+                        disabled={isDispatchingThis}
+                        onClick={() => handleSendCorporateAdminEmail(admin)}
+                        className="px-3 py-1.5 rounded-xl bg-purple-600/20 hover:bg-purple-600/40 text-purple-200 border border-purple-500/40 text-xs font-mono flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+                        title={`Send / Resend credentials email to ${admin.email}`}
+                      >
+                        {isDispatchingThis ? (
+                          <>
+                            <RefreshCw className="w-3 h-3 animate-spin text-purple-300" />
+                            <span>Dispatching...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Send className="w-3 h-3 text-purple-300" />
+                            <span>Send Credentials</span>
+                          </>
+                        )}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleOpenCorpAdminModal(admin)}
+                        className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-white/10 transition-colors cursor-pointer"
+                        title="Edit Corporate Admin Privileges"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleRevokeCorporateAdmin(admin)}
+                        className="p-1.5 rounded-xl bg-slate-800 hover:bg-rose-950/60 text-slate-400 hover:text-rose-400 border border-white/10 hover:border-rose-500/30 transition-colors cursor-pointer"
+                        title="Revoke Corporate Admin Privileges"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
         {/* Teams & Members Section */}
         <div className="space-y-4 pt-2">
           {/* Outbound SMTP Mail Gateway Status Card */}
@@ -1163,16 +1783,23 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
 
                                   <button
                                     type="button"
-                                    onClick={async () => {
-                                      if (!confirm(`Remove member ${mem.name} (${mem.email}) from ${team.name}?`)) return;
-                                      const updatedTeam = {
-                                        ...team,
-                                        members: team.members.filter((m: any) => m.id !== mem.id),
-                                        updatedAt: new Date().toISOString(),
-                                      };
-                                      setTeams(teams.map(t => t.id === team.id ? updatedTeam : t));
-                                      await saveTeamToFirestore(updatedTeam);
-                                      setNotice({ type: 'info', text: `Removed ${mem.name} from ${team.name}.` });
+                                    onClick={() => {
+                                      setConfirmDialog({
+                                        isOpen: true,
+                                        title: 'Remove Team Member',
+                                        description: `Are you sure you want to remove member ${mem.name} (${mem.email}) from ${team.name}?`,
+                                        confirmText: 'Remove Member',
+                                        onConfirm: async () => {
+                                          const updatedTeam = {
+                                            ...team,
+                                            members: team.members.filter((m: any) => m.id !== mem.id),
+                                            updatedAt: new Date().toISOString(),
+                                          };
+                                          setTeams(teams.map(t => t.id === team.id ? updatedTeam : t));
+                                          await saveTeamToFirestore(updatedTeam);
+                                          setNotice({ type: 'info', text: `Removed ${mem.name} from ${team.name}.` });
+                                        }
+                                      });
                                     }}
                                     className="p-1 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded transition-colors"
                                     title="Remove Member"
@@ -1364,6 +1991,127 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
                 </label>
               </div>
 
+              {/* Initial Corporate Administrator Provisioning Section */}
+              <div className="p-4 rounded-xl bg-slate-950 border border-amber-500/30 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Crown className="w-4 h-4 text-amber-400" />
+                    <span className="text-xs font-bold text-white uppercase tracking-wider">
+                      Initial Corporate Administrator Setup (Optional)
+                    </span>
+                  </div>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={provisionInitialCorpAdmin}
+                      onChange={(e) => setProvisionInitialCorpAdmin(e.target.checked)}
+                      className="w-4 h-4 accent-amber-500 rounded cursor-pointer"
+                    />
+                    <span className="text-xs font-medium text-amber-300">Appoint Admin</span>
+                  </label>
+                </div>
+
+                {provisionInitialCorpAdmin && (
+                  <div className="space-y-3 pt-2 border-t border-white/5 animate-fadeIn">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-slate-300 text-xs font-medium">Corporate Admin Full Name</label>
+                        <input
+                          type="text"
+                          value={newCorpAdminName}
+                          onChange={(e) => setNewCorpAdminName(e.target.value)}
+                          placeholder="e.g. Elena Rostova"
+                          className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-amber-500"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-slate-300 text-xs font-medium">Corporate Admin Work Email *</label>
+                        <input
+                          type="email"
+                          value={newCorpAdminEmail}
+                          onChange={(e) => setNewCorpAdminEmail(e.target.value)}
+                          placeholder="e.g. elena.admin@company.com"
+                          className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-white text-xs font-mono focus:outline-none focus:border-amber-500"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-slate-300 text-xs font-medium">Position / Title</label>
+                      <input
+                        type="text"
+                        value={newCorpAdminTitle}
+                        onChange={(e) => setNewCorpAdminTitle(e.target.value)}
+                        placeholder="e.g. VP of AI Engineering & Infrastructure"
+                        className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-amber-500"
+                      />
+                    </div>
+
+                    <div className="p-2.5 rounded-lg bg-slate-900/60 border border-white/5">
+                      <div className="text-[10px] text-slate-400 font-mono uppercase mb-1.5 font-semibold">
+                        Delegated Authority for this Corporate Admin:
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px]">
+                        <label className="flex items-center gap-1.5 cursor-pointer text-slate-300">
+                          <input
+                            type="checkbox"
+                            checked={newCorpAdminPrivileges.canCreateTeams}
+                            onChange={(e) => setNewCorpAdminPrivileges({ ...newCorpAdminPrivileges, canCreateTeams: e.target.checked })}
+                            className="w-3.5 h-3.5 accent-purple-500 rounded"
+                          />
+                          <span>Create Teams</span>
+                        </label>
+                        <label className="flex items-center gap-1.5 cursor-pointer text-slate-300">
+                          <input
+                            type="checkbox"
+                            checked={newCorpAdminPrivileges.canManageBYOK}
+                            onChange={(e) => setNewCorpAdminPrivileges({ ...newCorpAdminPrivileges, canManageBYOK: e.target.checked })}
+                            className="w-3.5 h-3.5 accent-purple-500 rounded"
+                          />
+                          <span>Enterprise BYOK</span>
+                        </label>
+                        <label className="flex items-center gap-1.5 cursor-pointer text-slate-300">
+                          <input
+                            type="checkbox"
+                            checked={newCorpAdminPrivileges.canManageBudgets}
+                            onChange={(e) => setNewCorpAdminPrivileges({ ...newCorpAdminPrivileges, canManageBudgets: e.target.checked })}
+                            className="w-3.5 h-3.5 accent-purple-500 rounded"
+                          />
+                          <span>Budgets & Caps</span>
+                        </label>
+                        <label className="flex items-center gap-1.5 cursor-pointer text-slate-300">
+                          <input
+                            type="checkbox"
+                            checked={newCorpAdminPrivileges.canInviteMembers}
+                            onChange={(e) => setNewCorpAdminPrivileges({ ...newCorpAdminPrivileges, canInviteMembers: e.target.checked })}
+                            className="w-3.5 h-3.5 accent-purple-500 rounded"
+                          />
+                          <span>Invite Engineers</span>
+                        </label>
+                        <label className="flex items-center gap-1.5 cursor-pointer text-slate-300">
+                          <input
+                            type="checkbox"
+                            checked={newCorpAdminPrivileges.canConfigureRouting}
+                            onChange={(e) => setNewCorpAdminPrivileges({ ...newCorpAdminPrivileges, canConfigureRouting: e.target.checked })}
+                            className="w-3.5 h-3.5 accent-purple-500 rounded"
+                          />
+                          <span>Model Routing</span>
+                        </label>
+                        <label className="flex items-center gap-1.5 cursor-pointer text-slate-300">
+                          <input
+                            type="checkbox"
+                            checked={newCorpAdminPrivileges.canViewTelemetry}
+                            onChange={(e) => setNewCorpAdminPrivileges({ ...newCorpAdminPrivileges, canViewTelemetry: e.target.checked })}
+                            className="w-3.5 h-3.5 accent-purple-500 rounded"
+                          />
+                          <span>Live Telemetry</span>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <div className="flex items-center justify-end gap-3 pt-3 border-t border-white/10">
                 <button
                   type="button"
@@ -1374,9 +2122,17 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold shadow-lg shadow-purple-600/30 transition-all cursor-pointer"
+                  disabled={isSubmittingCompany}
+                  className="flex items-center gap-2 px-5 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold shadow-lg shadow-purple-600/30 transition-all cursor-pointer disabled:opacity-50"
                 >
-                  Save & Provision to Firestore
+                  {isSubmittingCompany ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin text-white" />
+                      <span>Provisioning...</span>
+                    </>
+                  ) : (
+                    <span>Save & Provision to Firestore</span>
+                  )}
                 </button>
               </div>
             </form>
@@ -1623,6 +2379,48 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
         </div>
       )}
 
+      {/* ==================== CUSTOM IN-APP CONFIRMATION MODAL (SANDBOX SAFE) ==================== */}
+      {confirmDialog.isOpen && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-slate-900 border border-white/20 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center">
+                <AlertCircle className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">{confirmDialog.title}</h3>
+                <p className="text-xs text-slate-400">Action requires confirmation</p>
+              </div>
+            </div>
+
+            <p className="text-sm text-slate-300 leading-relaxed bg-slate-950/60 p-3.5 rounded-xl border border-white/5 font-mono">
+              {confirmDialog.description}
+            </p>
+
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-white/10">
+              <button
+                type="button"
+                onClick={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const fn = confirmDialog.onConfirm;
+                  setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+                  await fn();
+                }}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-lg shadow-rose-600/30 transition-all cursor-pointer"
+              >
+                {confirmDialog.confirmText}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ==================== MODAL 3: QUICK SMTP CONFIGURATION & DISPATCH ==================== */}
       {showSmtpQuickConfigModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-fadeIn">
@@ -1821,6 +2619,236 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
                     )}
                   </button>
                 </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== MODAL: PROVISION / EDIT CORPORATE ADMIN ==================== */}
+      {showCorpAdminModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
+          <div className="bg-slate-900 border border-white/10 rounded-2xl w-full max-w-xl p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-white/10">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-300">
+                  <Crown className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">
+                    {editingCorpAdmin ? 'Edit Corporate Administrator' : 'Appoint Corporate Administrator'}
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Company: <strong className="text-slate-200">{selectedCompany.name}</strong> • Delegated SuperAdmin Authority
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowCorpAdminModal(false)}
+                className="text-slate-400 hover:text-white text-lg font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200 leading-relaxed">
+              <strong>Corporate Admin Authority:</strong> This administrator can log in to manage department teams, enterprise BYOK credentials, model routing, token budgets, and engineer onboarding for <strong>{selectedCompany.name}</strong>.
+            </div>
+
+            <form onSubmit={handleSaveCorporateAdmin} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-slate-300 font-medium text-xs">Full Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={corpAdminName}
+                    onChange={(e) => setCorpAdminName(e.target.value)}
+                    placeholder="e.g. Elena Rostova"
+                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-slate-300 font-medium text-xs">Work Email Address *</label>
+                  <input
+                    type="email"
+                    required
+                    value={corpAdminEmail}
+                    onChange={(e) => setCorpAdminEmail(e.target.value)}
+                    placeholder="elena.rostova@solarastra.in"
+                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-slate-300 font-medium text-xs">Executive Title / Role</label>
+                  <input
+                    type="text"
+                    value={corpAdminTitle}
+                    onChange={(e) => setCorpAdminTitle(e.target.value)}
+                    placeholder="Director of AI Engineering"
+                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-slate-300 font-medium text-xs">Tier Access Cap</label>
+                  <select
+                    value={corpAdminTierCap}
+                    onChange={(e) => setCorpAdminTierCap(e.target.value)}
+                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-amber-500"
+                  >
+                    <option value="Frontier Tier 3">Frontier Tier 3 (Full Reasoning & Flagships)</option>
+                    <option value="General Tier 2">General Tier 2 (Standard Enterprise)</option>
+                    <option value="Fast Tier 1">Fast Tier 1 (High-Throughput)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-slate-300 font-medium text-xs">Monthly Token Quota Allocation</label>
+                  <span className="text-[11px] font-mono text-purple-300 font-bold">
+                    {(corpAdminQuota / 1_000_000).toFixed(0)}M tokens/mo
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={5_000_000}
+                  max={selectedCompany.monthlyTokenQuota || 100_000_000}
+                  step={5_000_000}
+                  value={corpAdminQuota}
+                  onChange={(e) => setCorpAdminQuota(Number(e.target.value))}
+                  className="w-full accent-amber-500"
+                />
+              </div>
+
+              {/* Delegated Privileges Checkboxes */}
+              <div className="p-3.5 rounded-xl bg-slate-950 border border-white/10 space-y-2.5">
+                <div className="text-xs font-bold text-white uppercase font-mono tracking-wider">
+                  Delegated Administrative Privileges
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                  <label className="flex items-center gap-2 p-2 rounded-lg bg-slate-900 border border-white/5 cursor-pointer text-slate-200 hover:border-white/20">
+                    <input
+                      type="checkbox"
+                      checked={corpAdminPrivileges.canCreateTeams}
+                      onChange={(e) => setCorpAdminPrivileges({ ...corpAdminPrivileges, canCreateTeams: e.target.checked })}
+                      className="w-4 h-4 accent-amber-500 rounded"
+                    />
+                    <div>
+                      <div className="font-semibold text-[11px]">Create & Manage Teams</div>
+                      <div className="text-[9px] text-slate-400">Add departmental sub-teams & assign leads</div>
+                    </div>
+                  </label>
+
+                  <label className="flex items-center gap-2 p-2 rounded-lg bg-slate-900 border border-white/5 cursor-pointer text-slate-200 hover:border-white/20">
+                    <input
+                      type="checkbox"
+                      checked={corpAdminPrivileges.canManageBYOK}
+                      onChange={(e) => setCorpAdminPrivileges({ ...corpAdminPrivileges, canManageBYOK: e.target.checked })}
+                      className="w-4 h-4 accent-amber-500 rounded"
+                    />
+                    <div>
+                      <div className="font-semibold text-[11px]">Enterprise BYOK Keys</div>
+                      <div className="text-[9px] text-slate-400">Configure provider keys (OpenAI, Anthropic, Gemini)</div>
+                    </div>
+                  </label>
+
+                  <label className="flex items-center gap-2 p-2 rounded-lg bg-slate-900 border border-white/5 cursor-pointer text-slate-200 hover:border-white/20">
+                    <input
+                      type="checkbox"
+                      checked={corpAdminPrivileges.canManageBudgets}
+                      onChange={(e) => setCorpAdminPrivileges({ ...corpAdminPrivileges, canManageBudgets: e.target.checked })}
+                      className="w-4 h-4 accent-amber-500 rounded"
+                    />
+                    <div>
+                      <div className="font-semibold text-[11px]">Spend & Budget Caps</div>
+                      <div className="text-[9px] text-slate-400">Allocate quotas & enforce spend thresholds</div>
+                    </div>
+                  </label>
+
+                  <label className="flex items-center gap-2 p-2 rounded-lg bg-slate-900 border border-white/5 cursor-pointer text-slate-200 hover:border-white/20">
+                    <input
+                      type="checkbox"
+                      checked={corpAdminPrivileges.canInviteMembers}
+                      onChange={(e) => setCorpAdminPrivileges({ ...corpAdminPrivileges, canInviteMembers: e.target.checked })}
+                      className="w-4 h-4 accent-amber-500 rounded"
+                    />
+                    <div>
+                      <div className="font-semibold text-[11px]">Invite & Provision Engineers</div>
+                      <div className="text-[9px] text-slate-400">Send credential invites and manage roles</div>
+                    </div>
+                  </label>
+
+                  <label className="flex items-center gap-2 p-2 rounded-lg bg-slate-900 border border-white/5 cursor-pointer text-slate-200 hover:border-white/20">
+                    <input
+                      type="checkbox"
+                      checked={corpAdminPrivileges.canConfigureRouting}
+                      onChange={(e) => setCorpAdminPrivileges({ ...corpAdminPrivileges, canConfigureRouting: e.target.checked })}
+                      className="w-4 h-4 accent-amber-500 rounded"
+                    />
+                    <div>
+                      <div className="font-semibold text-[11px]">Autonomous Routing</div>
+                      <div className="text-[9px] text-slate-400">Configure BYOK vs flat-rate subscription policies</div>
+                    </div>
+                  </label>
+
+                  <label className="flex items-center gap-2 p-2 rounded-lg bg-slate-900 border border-white/5 cursor-pointer text-slate-200 hover:border-white/20">
+                    <input
+                      type="checkbox"
+                      checked={corpAdminPrivileges.canViewTelemetry}
+                      onChange={(e) => setCorpAdminPrivileges({ ...corpAdminPrivileges, canViewTelemetry: e.target.checked })}
+                      className="w-4 h-4 accent-amber-500 rounded"
+                    />
+                    <div>
+                      <div className="font-semibold text-[11px]">Live Telemetry & Logs</div>
+                      <div className="text-[9px] text-slate-400">View real-time token metrics and audit trails</div>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              {/* Email dispatch toggle */}
+              <div className="flex items-center gap-3 p-3 rounded-xl bg-slate-950 border border-white/10">
+                <input
+                  type="checkbox"
+                  id="corpAdminEmailToggle"
+                  checked={corpAdminSendEmail}
+                  onChange={(e) => setCorpAdminSendEmail(e.target.checked)}
+                  className="w-4 h-4 accent-amber-500 rounded cursor-pointer"
+                />
+                <label htmlFor="corpAdminEmailToggle" className="text-slate-300 text-xs cursor-pointer">
+                  <strong>Dispatch Live Onboarding Email</strong>: Send immediate credential setup email with interpolated company & privilege parameters.
+                </label>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-white/10">
+                <button
+                  type="button"
+                  onClick={() => setShowCorpAdminModal(false)}
+                  className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 hover:bg-slate-700 transition-colors text-xs cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingCorpAdmin}
+                  className="flex items-center gap-2 px-5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-purple-600 hover:from-amber-400 hover:to-purple-500 text-slate-950 font-bold text-xs shadow-lg shadow-amber-500/20 transition-all cursor-pointer disabled:opacity-50"
+                >
+                  {isSubmittingCorpAdmin ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Saving Corporate Admin...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Crown className="w-3.5 h-3.5" />
+                      <span>{editingCorpAdmin ? 'Update Privileges' : 'Appoint Corporate Admin'}</span>
+                    </>
+                  )}
+                </button>
               </div>
             </form>
           </div>
