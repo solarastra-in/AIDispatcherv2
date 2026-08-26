@@ -34,6 +34,9 @@ import { canUserViewPage } from './utils/permissions';
 import { AIModel, UserPersona, ContextLedgerEntry } from './types';
 import { INITIAL_AI_MODELS, PERSONA_PROFILES } from './data/mockData';
 import { apiService } from './core/apiSurface';
+import { authedFetch } from './lib/firebaseClient';
+import { safeAlert } from './lib/safeDialogs';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { 
   saveLedgerEntryToFirestore, 
   loadLedgerFromFirestore, 
@@ -242,25 +245,42 @@ export default function App() {
     }
   };
 
-  const handleAddModel = (newModel: AIModel) => {
-    setModels((prev) => [newModel, ...prev]);
-    // Also notify server
-    fetch('/api/admin/models', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newModel),
-    }).catch((e) => console.warn('Saved model in client catalog'));
+  const handleAddModel = async (newModel: AIModel) => {
+    try {
+      const res = await authedFetch('/api/admin/models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newModel),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
+      setModels((prev) => [newModel, ...prev]);
+    } catch (e: any) {
+      console.error('Failed to add model:', e.message);
+      safeAlert(`Failed to add model to the catalog: ${e.message}`);
+    }
   };
 
-  const handleUpdateModelStatus = (id: string, status: AIModel['status']) => {
-    setModels((prev) =>
-      prev.map((m) => (m.id === id ? { ...m, status } : m))
-    );
-    fetch(`/api/admin/models/${id}/status`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status }),
-    }).catch((e) => console.warn('Updated status in client catalog'));
+  const handleUpdateModelStatus = async (id: string, status: AIModel['status']) => {
+    try {
+      const res = await authedFetch(`/api/admin/models/${id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
+      setModels((prev) =>
+        prev.map((m) => (m.id === id ? { ...m, status } : m))
+      );
+    } catch (e: any) {
+      console.error('Failed to update model status:', e.message);
+      safeAlert(`Failed to update model status: ${e.message}`);
+    }
   };
 
   return (
@@ -354,7 +374,7 @@ export default function App() {
         )}
 
         {/* Access Guard for Restricted Tabs */}
-        {!canUserViewPage(currentTab, activePersona, null) ? (
+        {!canUserViewPage(currentTab, activePersona, firebaseUser?.email) ? (
           <PageAccessGuard
             tabId={currentTab}
             activePersona={activePersona}
@@ -826,9 +846,17 @@ export default function App() {
         onClose={() => setIsAuthGateOpen(false)}
         title="Activate Your 7-Day Free Trial"
         reason="Sign up with Google to access our managed Claude 3.7 & Gemini 2.5 subscription pools. Zero credit card or payment friction required."
-        onSuccess={() => {
+        onSuccess={(user) => {
           setIsAuthGateOpen(false);
           setCurrentTab('dispatch');
+          if (user && !firebaseUser) {
+            const userPersona = PERSONA_PROFILES.find(p => p.role === 'user') || PERSONA_PROFILES[1];
+            setActivePersona({
+              ...userPersona,
+              name: user.displayName || userPersona.name,
+              email: user.email || userPersona.email,
+            });
+          }
         }}
       />
 
@@ -845,6 +873,7 @@ export default function App() {
           setCurrentTab(tab);
           setIsRoleMatrixOpen(false);
         }}
+        realUserEmail={firebaseUser?.email}
       />
 
       {/* 7-Step Company Admin Onboarding & Team Provisioning Wizard */}

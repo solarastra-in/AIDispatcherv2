@@ -35,6 +35,7 @@ interface RoleMatrixModalProps {
   activePersona: UserPersona;
   onSelectPersona: (persona: UserPersona) => void;
   onNavigateTab?: (tab: string) => void;
+  realUserEmail?: string | null;
 }
 
 interface RoleAuthorityProfile {

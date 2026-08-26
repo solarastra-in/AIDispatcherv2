@@ -3402,7 +3402,7 @@ app.post("/api/email/notify", async (req, res) => {
   }
 
   // Lookup template if available
-  const matchedTemplate = DEFAULT_EMAIL_TEMPLATES[templateType];
+  const matchedTemplate = serverEmailTemplates[templateType];
   const passedVars: Record<string, string> = { ...variables };
 
   const resolvedRecipientName = recipientName || passedVars["{{recipient_name}}"] || passedVars.recipientName || (recipientEmail.split("@")[0] || "Team Member");

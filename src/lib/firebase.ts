@@ -123,8 +123,8 @@ export async function signInWithGoogle(): Promise<{ user: User; idToken: string 
     const user = result.user;
     const idToken = await user.getIdToken();
     
-    // Persist user profile to Firestore
-    await saveUserProfile(user);
+    // Persist user profile to Firestore with baseline 'user' role
+    await saveUserProfile(user, 'user');
 
     return { user, idToken };
   } catch (error: any) {
@@ -151,21 +151,17 @@ export function onAuthChanged(callback: (user: User | null) => void) {
 }
 
 // User Profile Firestore Sync
-export async function saveUserProfile(user: User, role: string = 'superadmin') {
-  try {
-    const userRef = doc(db, 'users', user.uid);
-    await setDoc(userRef, {
-      uid: user.uid,
-      email: user.email,
-      displayName: user.displayName || user.email?.split('@')[0] || 'Admin',
-      photoURL: user.photoURL || '',
-      role: user.email === 'solarastra.in@gmail.com' ? 'superadmin' : role,
-      lastLoginAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }, { merge: true });
-  } catch (err) {
-    console.warn('Failed to persist user profile to Firestore:', err);
-  }
+export async function saveUserProfile(user: User, role: string) {
+  const userRef = doc(db, 'users', user.uid);
+  await setDoc(userRef, {
+    uid: user.uid,
+    email: user.email,
+    displayName: user.displayName || user.email?.split('@')[0] || 'Admin',
+    photoURL: user.photoURL || '',
+    role: user.email === 'solarastra.in@gmail.com' ? 'superadmin' : role,
+    lastLoginAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }, { merge: true });
 }
 
 // ==================== LOCAL STORAGE CACHE & FALLBACK HELPERS ====================
@@ -191,40 +187,24 @@ function safeStorageSet<T>(key: string, val: T): void {
 }
 
 // ==================== FIRESTORE PERSISTENCE HELPERS ====================
-
+ 
 // 1. Credentials Persistence
 export async function saveCredentialToFirestore(provider: string, data: any) {
-  try {
-    const creds = safeStorageGet<Record<string, any>>('whyor_credentials', {});
-    creds[provider] = { ...data, provider, updatedAt: new Date().toISOString() };
-    safeStorageSet('whyor_credentials', creds);
-
-    const credRef = doc(db, 'credentials', provider);
-    await setDoc(credRef, {
-      ...data,
-      provider,
-      updatedAt: new Date().toISOString(),
-    }, { merge: true });
-  } catch (err: any) {
-    console.warn(`Notice: Saved credential for ${provider} locally (Firestore offline/sync pending):`, err?.message || err);
-  }
+  const credRef = doc(db, 'credentials', provider);
+  await setDoc(credRef, {
+    ...data,
+    provider,
+    updatedAt: new Date().toISOString(),
+  }, { merge: true });
 }
 
 export async function loadAllCredentialsFromFirestore(): Promise<Record<string, any>> {
-  try {
-    const snap = await getDocs(collection(db, 'credentials'));
-    const result: Record<string, any> = {};
-    snap.forEach((docSnap) => {
-      result[docSnap.id] = docSnap.data();
-    });
-    if (Object.keys(result).length > 0) {
-      safeStorageSet('whyor_credentials', result);
-      return result;
-    }
-  } catch (err: any) {
-    console.warn('Notice: Firestore offline for credentials, using local cache:', err?.message || err);
-  }
-  return safeStorageGet<Record<string, any>>('whyor_credentials', {});
+  const snap = await getDocs(collection(db, 'credentials'));
+  const result: Record<string, any> = {};
+  snap.forEach((docSnap) => {
+    result[docSnap.id] = docSnap.data();
+  });
+  return result;
 }
 
 // 2. SMTP Settings Persistence (Admin Console)
@@ -258,30 +238,14 @@ export interface SmtpConfigFirestore {
 }
 
 export async function saveSmtpSettingsToFirestore(settings: Partial<SmtpConfigFirestore>) {
-  try {
-    const existing = safeStorageGet<Partial<SmtpConfigFirestore>>('whyor_smtp_settings', {});
-    const merged = { ...existing, ...settings, id: 'global_smtp', updatedAt: new Date().toISOString() };
-    safeStorageSet('whyor_smtp_settings', merged);
-
-    const smtpRef = doc(db, 'smtp_settings', 'global_smtp');
-    await setDoc(smtpRef, merged, { merge: true });
-  } catch (err: any) {
-    console.warn('Notice: Saved SMTP settings locally (Firestore offline/sync pending):', err?.message || err);
-  }
+  const merged = { ...settings, id: 'global_smtp', updatedAt: new Date().toISOString() };
+  const smtpRef = doc(db, 'smtp_settings', 'global_smtp');
+  await setDoc(smtpRef, merged, { merge: true });
 }
 
 export async function loadSmtpSettingsFromFirestore(): Promise<SmtpConfigFirestore | null> {
-  try {
-    const docSnap = await getDoc(doc(db, 'smtp_settings', 'global_smtp'));
-    if (docSnap.exists()) {
-      const data = docSnap.data() as SmtpConfigFirestore;
-      safeStorageSet('whyor_smtp_settings', data);
-      return data;
-    }
-  } catch (err: any) {
-    console.warn('Notice: Firestore offline for SMTP settings, using local fallback:', err?.message || err);
-  }
-  return safeStorageGet<SmtpConfigFirestore | null>('whyor_smtp_settings', null);
+  const docSnap = await getDoc(doc(db, 'smtp_settings', 'global_smtp'));
+  return docSnap.exists() ? (docSnap.data() as SmtpConfigFirestore) : null;
 }
 
 // 2b. Email Templates Persistence (HTML & Text Customization for Billing/System Notifications)
@@ -299,47 +263,20 @@ export interface EmailTemplateConfig {
 }
 
 export async function saveEmailTemplateToFirestore(template: EmailTemplateConfig) {
-  try {
-    const cached = safeStorageGet<Record<string, EmailTemplateConfig>>('whyor_email_templates', {});
-    cached[template.id] = { ...template, updatedAt: new Date().toISOString() };
-    safeStorageSet('whyor_email_templates', cached);
-
-    const templateRef = doc(db, 'email_templates', template.id);
-    await setDoc(templateRef, {
-      ...template,
-      updatedAt: new Date().toISOString(),
-    }, { merge: true });
-  } catch (err: any) {
-    console.warn(`Notice: Saved email template ${template.id} locally:`, err?.message || err);
-  }
+  const templateRef = doc(db, 'email_templates', template.id);
+  await setDoc(templateRef, { ...template, updatedAt: new Date().toISOString() }, { merge: true });
 }
 
 export async function saveAllEmailTemplatesToFirestore(templates: Record<string, EmailTemplateConfig>) {
-  try {
-    safeStorageSet('whyor_email_templates', templates);
-    const promises = Object.values(templates).map((template) => saveEmailTemplateToFirestore(template));
-    await Promise.all(promises);
-  } catch (err: any) {
-    console.warn('Notice: Saved email templates locally (Firestore sync pending):', err?.message || err);
-  }
+  await Promise.all(Object.values(templates).map((template) => saveEmailTemplateToFirestore(template)));
 }
 
 export async function loadEmailTemplatesFromFirestore(): Promise<Record<string, EmailTemplateConfig> | null> {
-  try {
-    const snap = await getDocs(collection(db, 'email_templates'));
-    if (!snap.empty) {
-      const result: Record<string, EmailTemplateConfig> = {};
-      snap.forEach((docSnap) => {
-        result[docSnap.id] = docSnap.data() as EmailTemplateConfig;
-      });
-      safeStorageSet('whyor_email_templates', result);
-      return result;
-    }
-  } catch (err: any) {
-    console.warn('Notice: Firestore offline for email templates, checking cache:', err?.message || err);
-  }
-  const cached = safeStorageGet<Record<string, EmailTemplateConfig> | null>('whyor_email_templates', null);
-  return (cached && Object.keys(cached).length > 0) ? cached : null;
+  const snap = await getDocs(collection(db, 'email_templates'));
+  if (snap.empty) return null;
+  const result: Record<string, EmailTemplateConfig> = {};
+  snap.forEach((docSnap) => { result[docSnap.id] = docSnap.data() as EmailTemplateConfig; });
+  return result;
 }
 
 // 3. Email Logs
@@ -353,49 +290,26 @@ export async function logEmailToFirestore(log: {
   errorMessage?: string;
   sentBy?: string;
 }) {
-  try {
-    const logId = `email_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    const fullLog = { ...log, id: logId, sentAt: new Date().toISOString() };
-    const logs = safeStorageGet<any[]>('whyor_email_logs', []);
-    safeStorageSet('whyor_email_logs', [fullLog, ...logs].slice(0, 100));
-
-    const logRef = doc(db, 'email_logs', logId);
-    await setDoc(logRef, fullLog);
-  } catch (err: any) {
-    console.warn('Notice: Saved email log locally:', err?.message || err);
-  }
+  const logId = `email_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const fullLog = { ...log, id: logId, sentAt: new Date().toISOString() };
+  const logRef = doc(db, 'email_logs', logId);
+  await setDoc(logRef, fullLog);
 }
 
 export async function loadEmailLogsFromFirestore(limitCount: number = 50): Promise<any[]> {
-  try {
-    const q = query(collection(db, 'email_logs'), orderBy('sentAt', 'desc'), limit(limitCount));
-    const snap = await getDocs(q);
-    const logs: any[] = [];
-    snap.forEach((d) => logs.push(d.data()));
-    if (logs.length > 0) {
-      safeStorageSet('whyor_email_logs', logs);
-      return logs;
-    }
-  } catch (err: any) {
-    console.warn('Notice: Firestore offline for email logs, using local cache:', err?.message || err);
-  }
-  return safeStorageGet<any[]>('whyor_email_logs', []).slice(0, limitCount);
+  const q = query(collection(db, 'email_logs'), orderBy('sentAt', 'desc'), limit(limitCount));
+  const snap = await getDocs(q);
+  const logs: any[] = [];
+  snap.forEach((d) => logs.push(d.data()));
+  return logs;
 }
 
 // 4. Dispatch Ledger & Context Ledger Persistence
 export async function saveDispatchRecordToFirestore(entry: any) {
-  try {
-    const ledgerId = entry.taskId || entry.id || `dispatch_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    const fullEntry = { ...entry, id: ledgerId, timestamp: entry.timestamp || new Date().toISOString() };
-    
-    const items = safeStorageGet<any[]>('whyor_dispatch_ledger', []);
-    safeStorageSet('whyor_dispatch_ledger', [fullEntry, ...items].slice(0, 200));
-
-    const ledgerRef = doc(db, 'dispatch_ledger', ledgerId);
-    await setDoc(ledgerRef, fullEntry, { merge: true });
-  } catch (err: any) {
-    console.warn('Notice: Saved dispatch record locally:', err?.message || err);
-  }
+  const ledgerId = entry.taskId || entry.id || `dispatch_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const fullEntry = { ...entry, id: ledgerId, timestamp: entry.timestamp || new Date().toISOString() };
+  const ledgerRef = doc(db, 'dispatch_ledger', ledgerId);
+  await setDoc(ledgerRef, fullEntry, { merge: true });
 }
 
 export async function saveLedgerEntryToFirestore(entry: any) {
@@ -403,19 +317,11 @@ export async function saveLedgerEntryToFirestore(entry: any) {
 }
 
 export async function loadDispatchLedgerFromFirestore(limitCount: number = 100): Promise<any[]> {
-  try {
-    const q = query(collection(db, 'dispatch_ledger'), orderBy('timestamp', 'desc'), limit(limitCount));
-    const snap = await getDocs(q);
-    const entries: any[] = [];
-    snap.forEach((d) => entries.push(d.data()));
-    if (entries.length > 0) {
-      safeStorageSet('whyor_dispatch_ledger', entries);
-      return entries;
-    }
-  } catch (err: any) {
-    console.warn('Notice: Firestore offline for dispatch ledger, using local cache:', err?.message || err);
-  }
-  return safeStorageGet<any[]>('whyor_dispatch_ledger', []).slice(0, limitCount);
+  const q = query(collection(db, 'dispatch_ledger'), orderBy('timestamp', 'desc'), limit(limitCount));
+  const snap = await getDocs(q);
+  const entries: any[] = [];
+  snap.forEach((d) => entries.push(d.data()));
+  return entries;
 }
 
 export async function loadLedgerFromFirestore(limitCount: number = 100): Promise<any[]> {
@@ -435,67 +341,50 @@ export async function saveContextSessionToFirestore(
     return;
   }
 
-  try {
-    const sessionRef = doc(db, 'context_sessions', id || `ctx_${Date.now()}`);
-    await setDoc(sessionRef, {
-      ...data,
-      id: id || `ctx_${Date.now()}`,
-      updatedAt: new Date().toISOString(),
-    }, { merge: true });
-  } catch (err: any) {
-    console.warn('Notice: Could not sync context session to Firestore:', err?.message || err);
-  }
+  const sessionRef = doc(db, 'context_sessions', id || `ctx_${Date.now()}`);
+  await setDoc(sessionRef, {
+    ...data,
+    id: id || `ctx_${Date.now()}`,
+    updatedAt: new Date().toISOString(),
+  }, { merge: true });
 }
 
 export async function loadContextSessionsFromFirestore(): Promise<any[]> {
-  try {
-    const q = query(collection(db, 'context_sessions'), orderBy('updatedAt', 'desc'), limit(50));
-    const snap = await getDocs(q);
-    const sessions: any[] = [];
-    snap.forEach((d) => sessions.push(d.data()));
-    return sessions;
-  } catch (err: any) {
-    console.warn('Notice: Could not load context sessions from Firestore:', err?.message || err);
-    return [];
-  }
+  const q = query(collection(db, 'context_sessions'), orderBy('updatedAt', 'desc'), limit(50));
+  const snap = await getDocs(q);
+  const sessions: any[] = [];
+  snap.forEach((d) => sessions.push(d.data()));
+  return sessions;
 }
 
 // 6. Audit Logs
 export async function recordAuditLogToFirestore(action: string, category: string, actor: string, details: string) {
-  try {
-    const logId = `audit_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    const fullLog = {
-      id: logId,
-      action,
-      category,
-      actor,
-      details,
-      timestamp: new Date().toISOString(),
-    };
-    const cached = safeStorageGet<any[]>('whyor_audit_logs', []);
-    safeStorageSet('whyor_audit_logs', [fullLog, ...cached].slice(0, 100));
-
-    const auditRef = doc(db, 'audit_logs', logId);
-    await setDoc(auditRef, fullLog);
-  } catch (err: any) {
-    console.warn('Notice: Recorded audit log locally:', err?.message || err);
+  const idToken = await auth.currentUser?.getIdToken();
+  const res = await fetch('/api/admin/audit-logs', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+    },
+    body: JSON.stringify({ eventType: action, actorEmail: actor, details: { category, details } }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `Failed to record audit log (${res.status})`);
   }
 }
 
 export async function loadAuditLogsFromFirestore(limitCount: number = 50): Promise<any[]> {
-  try {
-    const q = query(collection(db, 'audit_logs'), orderBy('timestamp', 'desc'), limit(limitCount));
-    const snap = await getDocs(q);
-    const logs: any[] = [];
-    snap.forEach((d) => logs.push(d.data()));
-    if (logs.length > 0) {
-      safeStorageSet('whyor_audit_logs', logs);
-      return logs;
-    }
-  } catch (err: any) {
-    console.warn('Notice: Firestore offline for audit logs, using local cache:', err?.message || err);
+  const idToken = await auth.currentUser?.getIdToken();
+  const res = await fetch(`/api/admin/audit-logs?limit=${limitCount}`, {
+    headers: idToken ? { Authorization: `Bearer ${idToken}` } : {},
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `Failed to load audit logs (${res.status})`);
   }
-  return safeStorageGet<any[]>('whyor_audit_logs', []).slice(0, limitCount);
+  const data = await res.json();
+  return data.logs || [];
 }
 
 // 7. Companies & Enterprise Onboarding Persistence
@@ -611,45 +500,21 @@ export async function saveCompanyToFirestore(
     }
   }
 
-  try {
-    const cached = safeStorageGet<CompanyFirestore[]>('whyor_companies', []);
-    const idx = cached.findIndex(c => c.id === company.id);
-    const updated = { ...company, updatedAt: new Date().toISOString() };
-    if (idx >= 0) cached[idx] = updated;
-    else cached.unshift(updated);
-    safeStorageSet('whyor_companies', cached);
-
-    const compRef = doc(db, 'companies', company.id);
-    await setDoc(compRef, updated, { merge: true });
-  } catch (err: any) {
-    console.warn('Notice: Saved company locally (Firestore offline/sync pending):', err?.message || err);
-  }
+  const updated = { ...company, updatedAt: new Date().toISOString() };
+  const compRef = doc(db, 'companies', company.id);
+  await setDoc(compRef, updated, { merge: true });
 }
 
 export async function loadCompaniesFromFirestore(): Promise<CompanyFirestore[]> {
-  try {
-    const q = query(collection(db, 'companies'), orderBy('createdAt', 'desc'), limit(50));
-    const snap = await getDocs(q);
-    const comps: CompanyFirestore[] = [];
-    snap.forEach((d) => comps.push(d.data() as CompanyFirestore));
-    if (comps.length > 0) {
-      safeStorageSet('whyor_companies', comps);
-      return comps;
-    }
-  } catch (err: any) {
-    console.warn('Notice: Firestore offline for companies, using local cache:', err?.message || err);
-  }
-  return safeStorageGet<CompanyFirestore[]>('whyor_companies', []);
+  const q = query(collection(db, 'companies'), orderBy('createdAt', 'desc'), limit(50));
+  const snap = await getDocs(q);
+  const comps: CompanyFirestore[] = [];
+  snap.forEach((d) => comps.push(d.data() as CompanyFirestore));
+  return comps;
 }
 
 export async function deleteCompanyFromFirestore(id: string): Promise<void> {
-  try {
-    const cached = safeStorageGet<CompanyFirestore[]>('whyor_companies', []);
-    safeStorageSet('whyor_companies', cached.filter(c => c.id !== id));
-    await deleteDoc(doc(db, 'companies', id));
-  } catch (err: any) {
-    console.warn('Notice: Deleted company locally (Firestore sync pending):', err?.message || err);
-  }
+  await deleteDoc(doc(db, 'companies', id));
 }
 
 // 8. Teams & Granular Access Controls Persistence
@@ -680,51 +545,24 @@ export interface TeamFirestore {
 }
 
 export async function saveTeamToFirestore(team: TeamFirestore): Promise<void> {
-  try {
-    const cached = safeStorageGet<TeamFirestore[]>('whyor_teams', []);
-    const idx = cached.findIndex(t => t.id === team.id);
-    const updated = { ...team, updatedAt: new Date().toISOString() };
-    if (idx >= 0) cached[idx] = updated;
-    else cached.unshift(updated);
-    safeStorageSet('whyor_teams', cached);
-
-    const teamRef = doc(db, 'teams', team.id);
-    await setDoc(teamRef, updated, { merge: true });
-  } catch (err: any) {
-    console.warn('Notice: Saved team locally (Firestore sync pending):', err?.message || err);
-  }
+  const updated = { ...team, updatedAt: new Date().toISOString() };
+  const teamRef = doc(db, 'teams', team.id);
+  await setDoc(teamRef, updated, { merge: true });
 }
 
 export async function loadTeamsFromFirestore(companyId?: string): Promise<TeamFirestore[]> {
-  try {
-    const q = query(collection(db, 'teams'), orderBy('createdAt', 'desc'), limit(50));
-    const snap = await getDocs(q);
-    const teams: TeamFirestore[] = [];
-    snap.forEach((d) => {
-      const data = d.data() as TeamFirestore;
-      if (!companyId || data.companyId === companyId) {
-        teams.push(data);
-      }
-    });
-    if (teams.length > 0) {
-      safeStorageSet('whyor_teams', teams);
-      return teams;
-    }
-  } catch (err: any) {
-    console.warn('Notice: Firestore offline for teams, using local cache:', err?.message || err);
-  }
-  const cached = safeStorageGet<TeamFirestore[]>('whyor_teams', []);
-  return companyId ? cached.filter(t => t.companyId === companyId) : cached;
+  const q = query(collection(db, 'teams'), orderBy('createdAt', 'desc'), limit(50));
+  const snap = await getDocs(q);
+  const teams: TeamFirestore[] = [];
+  snap.forEach((d) => {
+    const data = d.data() as TeamFirestore;
+    if (!companyId || data.companyId === companyId) teams.push(data);
+  });
+  return teams;
 }
 
 export async function deleteTeamFromFirestore(id: string): Promise<void> {
-  try {
-    const cached = safeStorageGet<TeamFirestore[]>('whyor_teams', []);
-    safeStorageSet('whyor_teams', cached.filter(t => t.id !== id));
-    await deleteDoc(doc(db, 'teams', id));
-  } catch (err: any) {
-    console.warn('Notice: Deleted team locally:', err?.message || err);
-  }
+  await deleteDoc(doc(db, 'teams', id));
 }
 
 // ==================== 9. USER 7-DAY TRIAL & SUBSCRIPTION TRACKING ====================
@@ -756,11 +594,9 @@ export interface UserTrialInfo {
 
 export async function saveUserTrialToFirestore(trial: Partial<UserTrialInfo> & { uid: string; email: string }): Promise<UserTrialInfo> {
   let now = new Date();
-  const cachedTrials = safeStorageGet<Record<string, UserTrialInfo>>('whyor_user_trials', {});
-  const existingLocal = cachedTrials[trial.uid];
 
-  let signupDate = trial.signupDate || trial.trialStartedAt || (existingLocal ? existingLocal.signupDate : now.toISOString());
-  let trialStartDate = trial.trialStartDate || trial.trialStartedAt || (existingLocal ? existingLocal.trialStartDate : now.toISOString());
+  let signupDate = trial.signupDate || trial.trialStartedAt || now.toISOString();
+  let trialStartDate = trial.trialStartDate || trial.trialStartedAt || now.toISOString();
   
   // Calculate trial end (7 days from start)
   let startDateObj = new Date(trialStartDate);
@@ -776,7 +612,7 @@ export async function saveUserTrialToFirestore(trial: Partial<UserTrialInfo> & {
     uid: trial.uid,
     email: trial.email,
     displayName: trial.displayName || trial.email.split('@')[0] || 'User',
-    plan: trial.plan || (trial.isPaidPlan ? 'pro' : (existingLocal ? existingLocal.plan : 'free_trial')),
+    plan: trial.plan || (trial.isPaidPlan ? 'pro' : 'free_trial'),
     planType: trial.planType || (trial.isPaidPlan ? 'pro' : 'free_trial'),
     isPaidPlan: trial.isPaidPlan ?? (trial.plan === 'pro' || trial.plan === 'enterprise'),
     signupDate,
@@ -788,100 +624,69 @@ export async function saveUserTrialToFirestore(trial: Partial<UserTrialInfo> & {
     daysRemaining,
     isTrialActive,
     isExpired,
-    hasConfiguredByok: trial.hasConfiguredByok ?? trial.isByokConfigured ?? (existingLocal ? existingLocal.hasConfiguredByok : false),
-    isByokConfigured: trial.hasConfiguredByok ?? trial.isByokConfigured ?? (existingLocal ? existingLocal.hasConfiguredByok : false),
-    dailyTokensUsed: trial.dailyTokensUsed ?? (existingLocal ? existingLocal.dailyTokensUsed : 0),
+    hasConfiguredByok: trial.hasConfiguredByok ?? trial.isByokConfigured ?? false,
+    isByokConfigured: trial.hasConfiguredByok ?? trial.isByokConfigured ?? false,
+    dailyTokensUsed: trial.dailyTokensUsed ?? 0,
     dailyTokenLimit: trial.dailyTokenLimit ?? 100000,
-    totalTokensProcessed: trial.totalTokensProcessed ?? (existingLocal ? existingLocal.totalTokensProcessed : 0),
-    totalDispatches: trial.totalDispatches ?? (existingLocal ? existingLocal.totalDispatches : 0),
+    totalTokensProcessed: trial.totalTokensProcessed ?? 0,
+    totalDispatches: trial.totalDispatches ?? 0,
     updatedAt: now.toISOString(),
   };
 
-  cachedTrials[trial.uid] = fullData;
-  safeStorageSet('whyor_user_trials', cachedTrials);
-
-  try {
-    const userDocRef = doc(db, 'user_trials', trial.uid);
-    await setDoc(userDocRef, fullData, { merge: true });
-  } catch (err: any) {
-    console.warn('Notice: Saved user trial locally (Firestore offline/sync pending):', err?.message || err);
-  }
+  const userDocRef = doc(db, 'user_trials', trial.uid);
+  await setDoc(userDocRef, fullData, { merge: true });
   return fullData;
 }
 
 export async function getUserTrialFromFirestore(uid: string, email?: string): Promise<UserTrialInfo | null> {
-  const cachedTrials = safeStorageGet<Record<string, UserTrialInfo>>('whyor_user_trials', {});
-  try {
-    const userDocRef = doc(db, 'user_trials', uid);
-    const snap = await getDoc(userDocRef);
-    if (snap.exists()) {
-      const data = snap.data() as UserTrialInfo;
-      const now = new Date();
-      const trialEndDate = data.trialEndDate || data.trialExpiresAt || new Date().toISOString();
-      const msRemaining = new Date(trialEndDate).getTime() - now.getTime();
-      const daysRemaining = Math.max(0, Math.ceil(msRemaining / (1000 * 60 * 60 * 24)));
-      const res: UserTrialInfo = {
-        ...data,
-        daysRemaining,
-        trialExpiresAt: trialEndDate,
-        trialStartedAt: data.trialStartDate || data.signupDate,
-        isTrialActive: daysRemaining > 0,
-        isExpired: daysRemaining <= 0 && data.plan === 'free_trial',
-        isPaidPlan: data.isPaidPlan || data.plan === 'pro' || data.plan === 'enterprise',
-        isByokConfigured: data.hasConfiguredByok || data.isByokConfigured,
-      };
-      cachedTrials[uid] = res;
-      safeStorageSet('whyor_user_trials', cachedTrials);
-      return res;
-    }
-    if (email) {
-      // Auto-initialize 7-day free trial on first retrieval
-      return await saveUserTrialToFirestore({ uid, email });
-    }
-  } catch (err: any) {
-    console.warn('Notice: Firestore offline for user trial, checking local cache:', err?.message || err);
+  const userDocRef = doc(db, 'user_trials', uid);
+  const snap = await getDoc(userDocRef);
+  if (snap.exists()) {
+    const data = snap.data() as UserTrialInfo;
+    const now = new Date();
+    const trialEndDate = data.trialEndDate || data.trialExpiresAt || new Date().toISOString();
+    const msRemaining = new Date(trialEndDate).getTime() - now.getTime();
+    const daysRemaining = Math.max(0, Math.ceil(msRemaining / (1000 * 60 * 60 * 24)));
+    return {
+      ...data,
+      daysRemaining,
+      trialExpiresAt: trialEndDate,
+      trialStartedAt: data.trialStartDate || data.signupDate,
+      isTrialActive: daysRemaining > 0,
+      isExpired: daysRemaining <= 0 && data.plan === 'free_trial',
+      isPaidPlan: data.isPaidPlan || data.plan === 'pro' || data.plan === 'enterprise',
+      isByokConfigured: data.hasConfiguredByok || data.isByokConfigured,
+    };
   }
-  if (cachedTrials[uid]) return cachedTrials[uid];
   if (email) {
+    // Auto-initialize 7-day free trial on first retrieval
     return await saveUserTrialToFirestore({ uid, email });
   }
   return null;
 }
 
 export async function loadAllUserTrialsFromFirestore(): Promise<UserTrialInfo[]> {
-  try {
-    const q = query(collection(db, 'user_trials'), orderBy('signupDate', 'desc'), limit(100));
-    const snap = await getDocs(q);
-    const trials: UserTrialInfo[] = [];
-    const cachedTrials: Record<string, UserTrialInfo> = {};
-    snap.forEach((d) => {
-      const data = d.data() as UserTrialInfo;
-      const now = new Date();
-      const trialEndDate = data.trialEndDate || data.trialExpiresAt || new Date().toISOString();
-      const msRemaining = new Date(trialEndDate).getTime() - now.getTime();
-      const daysRemaining = Math.max(0, Math.ceil(msRemaining / (1000 * 60 * 60 * 24)));
-      const full: UserTrialInfo = {
-        ...data,
-        daysRemaining,
-        trialExpiresAt: trialEndDate,
-        trialStartedAt: data.trialStartDate || data.signupDate,
-        isTrialActive: daysRemaining > 0,
-        isExpired: daysRemaining <= 0 && data.plan === 'free_trial',
-        isPaidPlan: data.isPaidPlan || data.plan === 'pro' || data.plan === 'enterprise',
-        isByokConfigured: data.hasConfiguredByok || data.isByokConfigured,
-      };
-      trials.push(full);
-      cachedTrials[full.uid] = full;
+  const q = query(collection(db, 'user_trials'), orderBy('signupDate', 'desc'), limit(100));
+  const snap = await getDocs(q);
+  const trials: UserTrialInfo[] = [];
+  snap.forEach((d) => {
+    const data = d.data() as UserTrialInfo;
+    const now = new Date();
+    const trialEndDate = data.trialEndDate || data.trialExpiresAt || new Date().toISOString();
+    const msRemaining = new Date(trialEndDate).getTime() - now.getTime();
+    const daysRemaining = Math.max(0, Math.ceil(msRemaining / (1000 * 60 * 60 * 24)));
+    trials.push({
+      ...data,
+      daysRemaining,
+      trialExpiresAt: trialEndDate,
+      trialStartedAt: data.trialStartDate || data.signupDate,
+      isTrialActive: daysRemaining > 0,
+      isExpired: daysRemaining <= 0 && data.plan === 'free_trial',
+      isPaidPlan: data.isPaidPlan || data.plan === 'pro' || data.plan === 'enterprise',
+      isByokConfigured: data.hasConfiguredByok || data.isByokConfigured,
     });
-    if (trials.length > 0) {
-      safeStorageSet('whyor_user_trials', cachedTrials);
-      return trials;
-    }
-  } catch (err: any) {
-    console.warn('Notice: Firestore offline for trials list, using local cache:', err?.message || err);
-  }
-  const cachedTrials = safeStorageGet<Record<string, UserTrialInfo>>('whyor_user_trials', {});
-  return Object.values(cachedTrials);
+  });
+  return trials;
 }
 
 // ==================== 10. CONTACT US INQUIRIES ====================
@@ -906,48 +711,30 @@ export async function saveContactInquiryToFirestore(inquiry: Omit<ContactInquiry
     createdAt: new Date().toISOString(),
   };
 
-  const cached = safeStorageGet<ContactInquiry[]>('whyor_contact_inquiries', []);
-  safeStorageSet('whyor_contact_inquiries', [fullInquiry, ...cached]);
+  // Primary write to Firestore
+  await setDoc(doc(db, 'contact_inquiries', id), fullInquiry);
 
+  // Best-effort audit log
   try {
-    await setDoc(doc(db, 'contact_inquiries', id), fullInquiry);
     await recordAuditLogToFirestore('CONTACT_INQUIRY_RECEIVED', 'support', inquiry.email, `Inquiry: ${inquiry.topic} from ${inquiry.name}`);
-  } catch (err: any) {
-    console.warn('Notice: Saved inquiry locally (Firestore sync pending):', err?.message || err);
+  } catch (auditErr: any) {
+    console.warn('Notice: Could not record audit log for contact inquiry (expected for anonymous submitters):', auditErr?.message || auditErr);
   }
+
   return fullInquiry;
 }
 
 export async function updateContactInquiryStatusInFirestore(id: string, status: ContactInquiry['status']): Promise<void> {
-  const cached = safeStorageGet<ContactInquiry[]>('whyor_contact_inquiries', []);
-  const item = cached.find(i => i.id === id);
-  if (item) {
-    item.status = status;
-    safeStorageSet('whyor_contact_inquiries', cached);
-  }
-
-  try {
-    const docRef = doc(db, 'contact_inquiries', id);
-    await setDoc(docRef, { status, updatedAt: new Date().toISOString() }, { merge: true });
-  } catch (err: any) {
-    console.warn('Notice: Updated inquiry status locally:', err?.message || err);
-  }
+  const docRef = doc(db, 'contact_inquiries', id);
+  await setDoc(docRef, { status, updatedAt: new Date().toISOString() }, { merge: true });
 }
 
 export async function loadContactInquiriesFromFirestore(): Promise<ContactInquiry[]> {
-  try {
-    const q = query(collection(db, 'contact_inquiries'), orderBy('createdAt', 'desc'), limit(50));
-    const snap = await getDocs(q);
-    const inquiries: ContactInquiry[] = [];
-    snap.forEach((d) => inquiries.push(d.data() as ContactInquiry));
-    if (inquiries.length > 0) {
-      safeStorageSet('whyor_contact_inquiries', inquiries);
-      return inquiries;
-    }
-  } catch (err: any) {
-    console.warn('Notice: Firestore offline for contact inquiries, using local cache:', err?.message || err);
-  }
-  return safeStorageGet<ContactInquiry[]>('whyor_contact_inquiries', []);
+  const q = query(collection(db, 'contact_inquiries'), orderBy('createdAt', 'desc'), limit(50));
+  const snap = await getDocs(q);
+  const inquiries: ContactInquiry[] = [];
+  snap.forEach((d) => inquiries.push(d.data() as ContactInquiry));
+  return inquiries;
 }
 
 // ==================== 11. ADMIN AI ENGINE KEYS & BUDGET CONFIGURATION ====================
@@ -1234,129 +1021,86 @@ export async function saveAdminKeyConfigToFirestore(config: AdminKeyConfig): Pro
     lastUpdated: new Date().toISOString(),
   };
 
-  const cached = safeStorageGet<AdminKeyConfig[]>('whyor_admin_keys', DEFAULT_ADMIN_KEYS);
-  const idx = cached.findIndex(k => k.id === config.id);
-  if (idx >= 0) cached[idx] = payload;
-  else cached.push(payload);
-  safeStorageSet('whyor_admin_keys', cached);
-
-  try {
-    const docRef = doc(db, 'admin_ai_keys', config.id);
-    await setDoc(docRef, payload, { merge: true });
-  } catch (err: any) {
-    console.warn(`Notice: Saved admin key config for ${config.id} locally:`, err?.message || err);
-  }
+  const docRef = doc(db, 'admin_ai_keys', config.id);
+  await setDoc(docRef, payload, { merge: true });
 }
 
 export async function loadAdminKeyConfigsFromFirestore(): Promise<AdminKeyConfig[]> {
-  try {
-    const snap = await getDocs(collection(db, 'admin_ai_keys'));
-    if (!snap.empty) {
-      const configs: AdminKeyConfig[] = [];
-      snap.forEach((d) => {
-        const data = d.data() as AdminKeyConfig;
-        const monthlyLimit = data.monthlyBudgetLimit ?? data.monthlyBudgetCents ?? 500;
-        const currentSpend = data.currentSpend ?? data.currentMonthlySpendUsd ?? 0;
-        const dailyLimit = data.dailyUsageLimit ?? data.dailyUsageLimitUsd ?? 50;
-        const todaySpend = data.todaySpend ?? data.todaySpendUsd ?? 0;
+  const snap = await getDocs(collection(db, 'admin_ai_keys'));
+  if (!snap.empty) {
+    const configs: AdminKeyConfig[] = [];
+    snap.forEach((d) => {
+      const data = d.data() as AdminKeyConfig;
+      const monthlyLimit = data.monthlyBudgetLimit ?? data.monthlyBudgetCents ?? 500;
+      const currentSpend = data.currentSpend ?? data.currentMonthlySpendUsd ?? 0;
+      const dailyLimit = data.dailyUsageLimit ?? data.dailyUsageLimitUsd ?? 50;
+      const todaySpend = data.todaySpend ?? data.todaySpendUsd ?? 0;
 
-        const isBudgetOver = monthlyLimit > 0 && currentSpend >= monthlyLimit;
-        const isDayUsageOver = dailyLimit > 0 && todaySpend >= dailyLimit;
-        
-        const hasKey = Boolean(data.apiKey && data.apiKey.trim().length > 0);
-        const hasSub = Boolean(data.hasSubscription && (data.subscriptionTier || data.sessionTokenMasked || data.subscriptionEmail));
-        const isConfigured = hasKey || hasSub;
-
-        let status = data.status;
-        let isActive = Boolean(data.isActive);
-        if (!isConfigured) {
-          status = 'unconfigured';
-          isActive = false;
-        } else if (isBudgetOver) {
-          status = 'budget_exceeded';
-        } else if (isDayUsageOver) {
-          status = 'day_limit_exceeded';
-        } else {
-          status = 'active';
-          isActive = true;
-        }
-
-        configs.push({
-          ...data,
-          apiKey: data.apiKey?.trim() || '',
-          hasSubscription: hasSub,
-          isActive,
-          status,
-          providerName: data.providerName || data.providerDisplayName || data.provider,
-          modelFamily: data.modelFamily || data.provider,
-          monthlyBudgetLimit: monthlyLimit,
-          monthlyBudgetCents: monthlyLimit,
-          currentSpend: currentSpend,
-          currentMonthlySpendUsd: currentSpend,
-          dailyUsageLimit: dailyLimit,
-          dailyUsageLimitUsd: dailyLimit,
-          todaySpend: todaySpend,
-          todaySpendUsd: todaySpend,
-          isBudgetOver,
-          isDayUsageOver,
-        });
-      });
+      const isBudgetOver = monthlyLimit > 0 && currentSpend >= monthlyLimit;
+      const isDayUsageOver = dailyLimit > 0 && todaySpend >= dailyLimit;
       
-      // Ensure all default providers exist if missing from Firestore
-      const loadedMap = new Map(configs.map(c => [c.id, c]));
-      for (const def of DEFAULT_ADMIN_KEYS) {
-        if (!loadedMap.has(def.id)) {
-          configs.push({ ...def, status: 'unconfigured', isActive: false, apiKey: '', hasSubscription: false });
-        }
+      const hasKey = Boolean(data.apiKey && data.apiKey.trim().length > 0);
+      const hasSub = Boolean(data.hasSubscription && (data.subscriptionTier || data.sessionTokenMasked || data.subscriptionEmail));
+      const isConfigured = hasKey || hasSub;
+
+      let status = data.status;
+      let isActive = Boolean(data.isActive);
+      if (!isConfigured) {
+        status = 'unconfigured';
+        isActive = false;
+      } else if (isBudgetOver) {
+        status = 'budget_exceeded';
+      } else if (isDayUsageOver) {
+        status = 'day_limit_exceeded';
+      } else {
+        status = 'active';
+        isActive = true;
       }
 
-      safeStorageSet('whyor_admin_keys', configs);
-      return configs;
+      configs.push({
+        ...data,
+        apiKey: data.apiKey?.trim() || '',
+        hasSubscription: hasSub,
+        isActive,
+        status,
+        providerName: data.providerName || data.providerDisplayName || data.provider,
+        modelFamily: data.modelFamily || data.provider,
+        monthlyBudgetLimit: monthlyLimit,
+        monthlyBudgetCents: monthlyLimit,
+        currentSpend: currentSpend,
+        currentMonthlySpendUsd: currentSpend,
+        dailyUsageLimit: dailyLimit,
+        dailyUsageLimitUsd: dailyLimit,
+        todaySpend: todaySpend,
+        todaySpendUsd: todaySpend,
+        isBudgetOver,
+        isDayUsageOver,
+      });
+    });
+    
+    // Ensure all default providers exist if missing from Firestore
+    const loadedMap = new Map(configs.map(c => [c.id, c]));
+    for (const def of DEFAULT_ADMIN_KEYS) {
+      if (!loadedMap.has(def.id)) {
+        configs.push({ ...def, status: 'unconfigured', isActive: false, apiKey: '', hasSubscription: false });
+      }
     }
-  } catch (err: any) {
-    console.warn('Notice: Firestore offline for admin keys, using cached/default keys:', err?.message || err);
+
+    return configs;
   }
-  
-  const rawCached = safeStorageGet<AdminKeyConfig[]>('whyor_admin_keys', DEFAULT_ADMIN_KEYS);
-  return (rawCached || DEFAULT_ADMIN_KEYS).map(k => {
-    const hasKey = Boolean(k.apiKey && k.apiKey.trim().length > 0);
-    const hasSub = Boolean(k.hasSubscription && (k.subscriptionTier || k.sessionTokenMasked || k.subscriptionEmail));
-    const isConfigured = hasKey || hasSub;
-    return {
-      ...k,
-      apiKey: k.apiKey?.trim() || '',
-      hasSubscription: hasSub,
-      isActive: isConfigured ? Boolean(k.isActive) : false,
-      status: isConfigured ? (k.status || 'active') : 'unconfigured',
-    };
-  });
+
+  return DEFAULT_ADMIN_KEYS;
 }
 
 export async function savePaymentInvoiceToFirestore(invoice: any): Promise<void> {
-  try {
-    const cached = safeStorageGet<any[]>('whyor_invoices', []);
-    const updated = [invoice, ...cached.filter(i => i.id !== invoice.id)].slice(0, 100);
-    safeStorageSet('whyor_invoices', updated);
-
-    const docRef = doc(db, 'billing_invoices', invoice.id);
-    await setDoc(docRef, invoice, { merge: true });
-  } catch (err: any) {
-    console.warn(`Notice: Saved invoice ${invoice.id} locally:`, err?.message || err);
-  }
+  const docRef = doc(db, 'billing_invoices', invoice.id);
+  await setDoc(docRef, invoice, { merge: true });
 }
 
 export async function loadPaymentInvoicesFromFirestore(): Promise<any[]> {
-  try {
-    const q = query(collection(db, 'billing_invoices'), orderBy('createdAt', 'desc'), limit(50));
-    const snap = await getDocs(q);
-    if (!snap.empty) {
-      const invoices: any[] = [];
-      snap.forEach((d) => invoices.push(d.data()));
-      safeStorageSet('whyor_invoices', invoices);
-      return invoices;
-    }
-  } catch (err: any) {
-    console.warn('Notice: Firestore offline for invoices, using local cache:', err?.message || err);
-  }
-  return safeStorageGet<any[]>('whyor_invoices', []);
+  const q = query(collection(db, 'billing_invoices'), orderBy('createdAt', 'desc'), limit(50));
+  const snap = await getDocs(q);
+  const invoices: any[] = [];
+  snap.forEach((d) => invoices.push(d.data()));
+  return invoices;
 }

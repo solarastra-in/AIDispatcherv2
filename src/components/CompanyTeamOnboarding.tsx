@@ -63,6 +63,7 @@ import { resolveApiUrl } from '../lib/firebaseClient';
 import { 
   sendCompanyWelcomeNotification, 
   sendCorporateAdminCredentialsNotification, 
+  sendEmployeeSetupGuideNotification,
   sendBatchEmailNotifications 
 } from '../services/emailNotificationService';
 import { User } from 'firebase/auth';
@@ -785,25 +786,19 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
 
       // Dispatch background SMTP welcome emails if requested
       if (bulkSendSmtpEmails) {
-        for (const row of validRows) {
-          fetch(resolveApiUrl('/api/admin/smtp/send-test'), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              to: row.email,
-              subject: `🚀 [WhyOr Dispatch] Welcome to ${selectedCompany.name} AI Lab — Workspace Credentials & Token Quota`,
-              templateType: 'member_invited',
-              recipientName: row.name,
-              teamName: row.teamName,
-              companyName: selectedCompany.name,
-              allocatedTokens: `${(row.monthlyTokenQuota / 1_000_000).toFixed(0)}M tokens / month`,
-              budgetLimit: `$${row.monthlyBudgetUsd.toLocaleString()} / month`,
-              assignedRole: row.role,
-              tierCap: row.tierCap,
-              sentBy: currentUser?.email || 'solarastra.in@gmail.com',
-            }),
-          }).catch(() => {});
-        }
+        sendEmployeeSetupGuideNotification({
+          employees: validRows.map(row => ({
+            name: row.name,
+            email: row.email,
+            role: row.role,
+            teamName: row.teamName,
+            tierCap: row.tierCap,
+            monthlyTokenQuota: row.monthlyTokenQuota,
+            monthlyBudgetUsd: row.monthlyBudgetUsd,
+          })),
+          company: selectedCompany,
+          sentBy: currentUser?.email || 'solarastra.in@gmail.com',
+        }).catch((err) => console.warn('Bulk email dispatch notice:', err));
       }
 
       setShowBulkUploadModal(false);
@@ -1298,75 +1293,26 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
   const handleSendCorporateAdminEmail = async (admin: CompanyAdminUser) => {
     setDispatchingCorpAdminEmail(admin.email);
     try {
-      const quotaFormatted = (admin.monthlyTokenQuota || 50_000_000).toLocaleString() + ' tokens / month';
-      const modelsList = selectedCompany.allowedModels?.length > 0
-        ? selectedCompany.allowedModels.join(', ')
-        : 'Gemini 3.7 Flash, Claude 3.7 Sonnet, GPT-4.5, DeepSeek R1';
-
-      const privList = [];
-      if (admin.privileges.canCreateTeams) privList.push('Create & Manage Teams');
-      if (admin.privileges.canManageBYOK) privList.push('Enterprise BYOK & Provider Keys');
-      if (admin.privileges.canManageBudgets) privList.push('Budget & Spend Control');
-      if (admin.privileges.canInviteMembers) privList.push('Invite & Provision Engineers');
-      if (admin.privileges.canConfigureRouting) privList.push('Autonomous Routing Policies');
-      if (admin.privileges.canViewTelemetry) privList.push('Live Telemetry & Logs');
-
-      const adminVars = {
-        '{{recipient_name}}': admin.name,
-        '{{recipient_email}}': admin.email,
-        '{{company_name}}': selectedCompany.name,
-        '{{role}}': `Corporate Administrator (${admin.title || 'Executive Lead'})`,
-        '{{allocated_tokens}}': quotaFormatted,
-        '{{authorized_models}}': modelsList,
-        '{{tier_cap}}': admin.tierCap || 'Frontier Tier 3',
-        '{{login_url}}': 'https://ais-dev-gcdyq3rgswqtgkxcjbfmqt-4552824319.us-west2.run.app',
-        '{{timestamp}}': new Date().toLocaleString(),
-        '{{custom_message}}': `You have been appointed as Corporate Administrator for ${selectedCompany.name} by Platform SuperAdmin (${currentUser?.email || 'solarastra.in@gmail.com'}). Delegated authority: ${privList.join(', ')}. You can now provision teams, configure BYOK keys, and allocate engineering quotas with $0.00 token markup.`,
-      };
-
-      const res = await fetch(resolveApiUrl('/api/admin/smtp/send-test'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          to: admin.email,
-          subject: `👑 [WhyOr Dispatch] Corporate Admin Credentials: ${selectedCompany.name} Delegated Authority`,
-          templateType: 'onboarding_invite',
-          recipientName: admin.name,
-          companyName: selectedCompany.name,
-          role: `Corporate Administrator - ${admin.title || 'Director of AI'}`,
-          allocatedTokens: quotaFormatted,
-          authorizedModels: modelsList,
-          customMessage: `You have been appointed Corporate Administrator for ${selectedCompany.name}. Delegated privileges: ${privList.join(', ')}. Login at WhyOr Dispatch AI with your verified email (${admin.email}) to manage corporate teams, enterprise BYOK credentials, and developer quotas.`,
-          sentBy: `SuperAdmin (${currentUser?.email || 'solarastra.in@gmail.com'})`,
-          variables: adminVars,
-        }),
+      const emailResult = await sendCorporateAdminCredentialsNotification({
+        admin,
+        company: selectedCompany,
+        sentBy: currentUser?.email || 'solarastra.in@gmail.com',
       });
 
-      const emailData = await res.json().catch(() => ({}));
-      if (res.ok && emailData.success) {
-        await logEmailToFirestore({
-          to: admin.email,
-          from: `WhyOr Dispatch AI Enterprise <${smtpStatus?.fromEmail || 'solarastra.in@gmail.com'}>`,
-          subject: `[WhyOr Dispatch AI] Corporate Admin Credentials - ${admin.name}`,
-          emailType: 'corporate_admin_invite',
-          status: 'sent',
-          messageId: emailData.messageId,
-          sentBy: currentUser?.email || 'solarastra.in@gmail.com',
-        });
-
+      if (emailResult.success) {
         await recordAuditLogToFirestore(
           'Dispatch Corporate Admin Invite',
           'smtp',
           currentUser?.email || 'solarastra.in@gmail.com',
-          `Dispatched Corporate Admin credential email to '${admin.name}' (${admin.email}) for ${selectedCompany.name}. Message-ID: ${emailData.messageId}`
+          `Dispatched Corporate Admin credential email to '${admin.name}' (${admin.email}) for ${selectedCompany.name}. Message-ID: ${emailResult.messageId}`
         );
 
         setNotice({
           type: 'success',
-          text: `Corporate Admin credentials & welcome email dispatched to ${admin.name} (${admin.email}) via SMTP (Message-ID: ${emailData.messageId}).`,
+          text: `Corporate Admin credentials & welcome email dispatched to ${admin.name} (${admin.email}) via SMTP (Message-ID: ${emailResult.messageId}).`,
         });
       } else {
-        const errorMsg = emailData.error || 'SMTP server delivery failed';
+        const errorMsg = emailResult.error || 'SMTP server delivery failed';
         setNotice({
           type: 'error',
           text: `Could not dispatch email to ${admin.email}: ${errorMsg}. Check your SMTP credentials in Settings.`,

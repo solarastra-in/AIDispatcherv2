@@ -48,6 +48,7 @@ import {
   CompanyAdminUser,
   auth
 } from '../../lib/firebase';
+import { sendEmailNotification } from '../../services/emailNotificationService';
 
 export interface AdminPrivileges {
   // Team Creation & Hierarchy Controls
@@ -600,22 +601,20 @@ export const AdminPrivilegesPortal: React.FC = () => {
         `Modified granular privileges & assigned role '${editingUser.role}' for ${editingUser.name} (${editingUser.email}) in '${editingUser.companyName}'.`
       );
 
-      // Trigger SMTP Notice
-      try {
-        await fetch('/api/admin/smtp/send-test', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            to: editingUser.email,
-            subject: `[WhyOr Dispatch AI] Security Privilege & Delegated Authority Update: ${editingUser.role}`,
-            templateType: 'admin_privilege_grant',
-            customMessage: `Dear ${editingUser.name},\n\nYour administrator privileges on WhyOr Dispatch AI for ${editingUser.companyName} have been updated by Portal SuperAdmin (${adminEmail}).\n\nAssigned Role: ${editingUser.role}\nTier Allowance: ${editingUser.tierCap}\nTeam Creation: ${editingUser.privileges.canCreateTeams ? 'Allowed (Max ' + (editingUser.privileges.maxTeamsAllowed || 'unlimited') + ')' : 'Restricted'}\nBYOK Management: ${editingUser.privileges.canConfigureBYOK ? 'Active (' + (editingUser.privileges.allowedBYOKProviders?.join(', ') || 'All') + ')' : 'Restricted'}.`,
-            sentBy: adminEmail
-          })
-        });
-      } catch (mailErr) {
+      // Trigger Centralized Email Notice with retry and fallback
+      sendEmailNotification({
+        to: editingUser.email,
+        subject: `[WhyOr Dispatch AI] Security Privilege & Delegated Authority Update: ${editingUser.role}`,
+        templateType: 'admin_privilege_grant',
+        recipientName: editingUser.name,
+        companyName: editingUser.companyName,
+        role: editingUser.role,
+        allocatedTokens: `${(editingUser.monthlyTokenQuota / 1_000_000).toFixed(0)}M tokens/mo`,
+        customMessage: `Dear ${editingUser.name},\n\nYour administrator privileges on WhyOr Dispatch AI for ${editingUser.companyName} have been updated by Portal SuperAdmin (${adminEmail}).\n\nAssigned Role: ${editingUser.role}\nTier Allowance: ${editingUser.tierCap}\nTeam Creation: ${editingUser.privileges.canCreateTeams ? 'Allowed (Max ' + (editingUser.privileges.maxTeamsAllowed || 'unlimited') + ')' : 'Restricted'}\nBYOK Management: ${editingUser.privileges.canConfigureBYOK ? 'Active (' + (editingUser.privileges.allowedBYOKProviders?.join(', ') || 'All') + ')' : 'Restricted'}.`,
+        sentBy: adminEmail,
+      }).catch((mailErr) => {
         console.warn('SMTP privilege notification notice:', mailErr);
-      }
+      });
 
       setNotification({
         type: 'success',

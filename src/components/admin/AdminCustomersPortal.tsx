@@ -38,6 +38,7 @@ import {
   logEmailToFirestore,
   auth
 } from '../../lib/firebase';
+import { sendQuotaThresholdNotification } from '../../services/emailNotificationService';
 
 interface AdminCustomersPortalProps {
   onNavigateTab: (tab: string) => void;
@@ -295,44 +296,25 @@ export const AdminCustomersPortal: React.FC<AdminCustomersPortalProps> = ({
     }
   };
 
-  // Dispatch Quota Notification via SMTP
+  // Dispatch Quota Notification via centralized email service
   const handleSendUsageReport = async (company: CompanyFirestore) => {
     setIsSendingAlert(true);
     try {
-      const res = await fetch('/api/admin/smtp/send-test', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          to: company.billingEmail,
-          subject: `[WhyOr Dispatch AI] Monthly Enterprise Usage & Quota Statement: ${company.name}`,
-          templateType: 'quota_alert',
-          customMessage: `Dear ${company.name} Administrator,\n\nYour current monthly token consumption is ${(company.monthlyTokensUsed || 0).toLocaleString()} out of ${company.monthlyTokenQuota.toLocaleString()} allocated tokens (${Math.round(((company.monthlyTokensUsed || 0) / Math.max(1, company.monthlyTokenQuota)) * 100)}% capacity). Your active routing priority is set to ${company.routingPriority.toUpperCase()}.\n\nLog in with your corporate Google Account to inspect granular per-team telemetry.`,
-          sentBy: auth.currentUser?.email || 'Admin Superuser'
-        })
+      const thresholdPct = Math.round(((company.monthlyTokensUsed || 0) / Math.max(1, company.monthlyTokenQuota)) * 100);
+      const targetEmail = company.billingEmail || company.companyAdminEmail || 'solarastra.in@gmail.com';
+      const emailResult = await sendQuotaThresholdNotification({
+        company,
+        thresholdPct,
+        sentBy: auth.currentUser?.email || 'Admin Superuser',
       });
-      let data: any = null;
-      if (res.headers.get('content-type')?.includes('application/json')) {
-        data = await res.json();
-      } else {
-        const rawText = await res.text().catch(() => '');
-        data = { success: false, error: rawText.slice(0, 150) || `HTTP ${res.status}` };
-      }
-      if (data.success) {
+
+      if (emailResult.success) {
         setNotification({
           type: 'success',
-          text: `Usage statement dispatched via SMTP to ${company.billingEmail} (${data.messageId || 'Success'}).`
-        });
-        await logEmailToFirestore({
-          to: company.billingEmail,
-          from: 'WhyOr Dispatch AI Enterprise <solarastra.in@gmail.com>',
-          subject: `[WhyOr Dispatch AI] Usage Statement: ${company.name}`,
-          emailType: 'quota_alert',
-          status: 'sent',
-          messageId: data.messageId,
-          sentBy: auth.currentUser?.email || 'Admin Superuser'
+          text: `Usage statement dispatched to ${targetEmail} (Message-ID: ${emailResult.messageId || 'sent'}).`
         });
       } else {
-        throw new Error(data.error || 'SMTP delivery failed');
+        throw new Error(emailResult.error || 'Email dispatch failed. Please verify SMTP settings.');
       }
     } catch (err: any) {
       setNotification({ type: 'error', text: `Failed to dispatch email: ${err.message}` });

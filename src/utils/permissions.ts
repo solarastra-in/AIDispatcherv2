@@ -244,8 +244,8 @@ export const ROLE_DEFINITIONS: Record<UserRole, RolePermissionSpec> = {
  * Checks if a given persona/role is authorized to view a specific tab/page.
  */
 export function canUserViewPage(tabId: string, persona: UserPersona, userEmail?: string | null): boolean {
-  // Master SuperAdmin override for solarastra.in@gmail.com
-  const isSuperEmail = (userEmail && userEmail.toLowerCase() === 'solarastra.in@gmail.com') || (persona.email.toLowerCase() === 'solarastra.in@gmail.com');
+  // CRITICAL SECURITY FIX: only a real, server-verified userEmail can grant superadmin override
+  const isSuperEmail = !!(userEmail && userEmail.toLowerCase() === 'solarastra.in@gmail.com');
   if (isSuperEmail) return true;
 
   // SuperAdmin Console is strictly limited to superadmin
@@ -277,7 +277,8 @@ export function canUserViewPage(tabId: string, persona: UserPersona, userEmail?:
  * Checks if a given persona/role is permitted to execute a specific action/submission.
  */
 export function canUserSubmitAction(action: ActionCapability, persona: UserPersona, userEmail?: string | null): boolean {
-  const isSuperEmail = (userEmail && userEmail.toLowerCase() === 'solarastra.in@gmail.com') || (persona.email.toLowerCase() === 'solarastra.in@gmail.com');
+  // CRITICAL SECURITY FIX: only a real, server-verified userEmail can grant superadmin override
+  const isSuperEmail = !!(userEmail && userEmail.toLowerCase() === 'solarastra.in@gmail.com');
   if (isSuperEmail) return true;
 
   const spec = ROLE_DEFINITIONS[persona.role];
