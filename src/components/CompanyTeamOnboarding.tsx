@@ -1613,11 +1613,11 @@ export const CompanyTeamOnboarding: React.FC<CompanyTeamOnboardingProps> = ({
     };
 
     try {
-      // 1. Update state
-      setTeams(teams.map(t => t.id === activeTeamForInvite.id ? updatedTeam : t));
-      
-      // 2. Persist to Firestore
+      // 1. Persist to Firestore
       await saveTeamToFirestore(updatedTeam);
+
+      // 2. Update local state — only reached if the save succeeded
+      setTeams(teams.map(t => t.id === activeTeamForInvite.id ? updatedTeam : t));
 
       // 3. Record Audit Log
       await recordAuditLogToFirestore(
