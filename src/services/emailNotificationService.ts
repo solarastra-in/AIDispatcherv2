@@ -1,6 +1,6 @@
 import { logEmailToFirestore, recordAuditLogToFirestore, CompanyFirestore, TeamFirestore, CompanyAdminUser } from '../lib/firebase';
 import { DEFAULT_EMAIL_TEMPLATES, interpolateTemplate } from '../lib/defaultTemplates';
-import { resolveApiUrl } from '../lib/firebaseClient';
+import { authedFetch } from '../lib/firebaseClient';
 
 export interface EmailNotificationRequest {
   to: string | string[];
@@ -146,14 +146,14 @@ export async function sendEmailNotification(
       // Try primary notify endpoint, with fallback to send-test / send-welcome
       let res: Response;
       try {
-        res = await fetch(resolveApiUrl('/api/email/notify'), {
+        res = await authedFetch('/api/email/notify', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         });
       } catch (networkErr) {
         // Fallback to legacy endpoint if notify route is unreachable
-        res = await fetch(resolveApiUrl('/api/admin/smtp/send-test'), {
+        res = await authedFetch('/api/admin/smtp/send-test', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),

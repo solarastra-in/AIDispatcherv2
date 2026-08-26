@@ -392,7 +392,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
   const handleClearEmailLogs = async () => {
     setIsClearingLogs(true);
     try {
-      await fetch('/api/admin/smtp/logs', { method: 'DELETE' });
+      await safeFetchJson('/api/admin/smtp/logs', { method: 'DELETE' });
       setEmailLogs([]);
       setStatusMessage({ type: 'success', text: 'Outbound dispatch logs successfully purged.' });
     } catch (err: any) {

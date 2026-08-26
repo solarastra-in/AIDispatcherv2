@@ -1309,9 +1309,9 @@ app.get("/api/credentials/profile", (req, res) => {
 
 // Middleware enforcing that users must be fully logged in via Google Auth or completed registration before configuring BYOK
 function requireAuthForBYOK(req: express.Request, res: express.Response, next: express.NextFunction) {
-  const email = resolveAuthenticatedEmail(req) || (req.headers["x-user-email"] as string) || (req.body?.userEmail || req.body?.email) || "solarastra.in@gmail.com";
+  const email = resolveAuthenticatedEmail(req);
   const permCheck = requireCapability(email, "manage_credentials");
-  if (permCheck.allowed || isSuperAdminEmail(email)) {
+  if (permCheck.allowed) {
     return next();
   }
 

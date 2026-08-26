@@ -384,10 +384,10 @@ export const DispatchConsole: React.FC<DispatchConsoleProps> = ({
 
           const data = await res.json();
           if (!res.ok || data.errorType) {
-            if (data.errorType === 'daily_trial_exhausted' || data.errorType === 'provider_quota_exhausted') {
+            if (data.errorType === 'daily_trial_exhausted' || data.errorType === 'provider_quota_exhausted' || data.errorType === 'budget_exceeded' || res.status === 402) {
               setIsQuotaModalOpen({
-                errorType: data.errorType,
-                title: data.errorType === 'daily_trial_exhausted' ? "Today's Free Trial Allowance Reached" : `${candidateModel.name} Limit Reached`,
+                errorType: data.errorType || (res.status === 402 ? 'budget_exceeded' : 'daily_trial_exhausted'),
+                title: data.errorType === 'budget_exceeded' || res.status === 402 ? "Spend Budget Cap Reached" : (data.errorType === 'daily_trial_exhausted' ? "Today's Free Trial Allowance Reached" : `${candidateModel.name} Limit Reached`),
                 providerName: candidateModel.provider,
                 modelName: candidateModel.name,
                 businessMessage: data.businessFriendlyMessage || data.error || "Free trial daily quota reached. Please connect your API key or upgrade.",
