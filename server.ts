@@ -1709,11 +1709,18 @@ app.get("/api/providers/connect-flows", (req, res) => {
 // ==================== ADMIN: PLATFORM ASSISTANT SETTINGS ====================
 
 app.get("/api/admin/settings/platform-assistant", (req, res) => {
+  const email = resolveAuthenticatedEmail(req);
+  const permCheck = requireCapability(email, "view_platform_console");
+  if (!permCheck.allowed) return res.status(401).json({ error: permCheck.reason });
   res.json(getPlatformAssistantConfig());
 });
 
 app.post("/api/admin/settings/platform-assistant", (req, res) => {
-  const { provider, modelId, useLocalProxyIfAvailable, maxUtilityTokens, adminId } = req.body;
+  const email = resolveAuthenticatedEmail(req);
+  const permCheck = requireCapability(email, "view_platform_console");
+  if (!permCheck.allowed) return res.status(401).json({ error: permCheck.reason });
+
+  const { provider, modelId, useLocalProxyIfAvailable, maxUtilityTokens } = req.body;
   if (!provider || !modelId) {
     return res.status(400).json({ error: "provider and modelId are required" });
   }
@@ -1722,7 +1729,7 @@ app.post("/api/admin/settings/platform-assistant", (req, res) => {
   }
   const updated = setPortalDefaultAssistantConfig(
     { provider, modelId, useLocalProxyIfAvailable, maxUtilityTokens },
-    adminId || "unknown_admin"
+    email!
   );
   res.json(updated);
 });
@@ -3197,7 +3204,7 @@ app.post("/api/admin/smtp/send-test", requireManageSmtp, async (req, res) => {
 });
 
 // 5b. Send Welcome / Onboarding Package Email (Alias endpoint for company & employee wizards)
-app.post("/api/admin/smtp/send-welcome", async (req, res) => {
+app.post("/api/admin/smtp/send-welcome", requireManageSmtp, async (req, res) => {
   const {
     to,
     recipientName,
@@ -3341,6 +3348,12 @@ app.post("/api/admin/smtp/send-welcome", async (req, res) => {
 
 // 5c. Centralized Enterprise Email Notification API
 app.post("/api/email/notify", async (req, res) => {
+  const email = resolveAuthenticatedEmail(req);
+  const permCheck = requireCapability(email, "manage_credentials");
+  if (!permCheck.allowed) {
+    return res.status(401).json({ success: false, error: permCheck.reason });
+  }
+
   const {
     to,
     subject,
@@ -3573,6 +3586,11 @@ app.post("/api/email/notify", async (req, res) => {
 
 // 5d. Batch Email Dispatch API with Throttling
 app.post("/api/email/batch", async (req, res) => {
+  const email = resolveAuthenticatedEmail(req);
+  const permCheck = requireCapability(email, "manage_credentials");
+  if (!permCheck.allowed) {
+    return res.status(401).json({ success: false, error: permCheck.reason });
+  }
   const { notifications = [] } = req.body;
   if (!Array.isArray(notifications) || notifications.length === 0) {
     return res.status(400).json({
@@ -3968,14 +3986,14 @@ app.post("/api/dispatch", async (req, res) => {
   }
 
   // Determine allowed tiers for caller persona
+  const { persona: resolvedPersona } = resolvePersona(email);
   const roleTierLimits: Record<string, string[]> = {
     guest: ["low", "mid"],
-    user: ["low", "mid", "high", "frontier", "deep_reasoning"],
     team_member: ["low", "mid", "high", "frontier"],
-    team_admin: ["low", "mid", "high", "frontier", "deep_reasoning"],
-    platform_admin: ["low", "mid", "high", "frontier", "deep_reasoning"],
+    company_admin: ["low", "mid", "high", "frontier", "deep_reasoning"],
+    super_admin: ["low", "mid", "high", "frontier", "deep_reasoning"],
   };
-  const allowedTiers = roleTierLimits[userRole] || ["low", "mid"];
+  const allowedTiers = roleTierLimits[resolvedPersona] || ["low", "mid"];
 
   // --- STAGE 2: Automated 7-Technique Token Reduction Pipeline ---
   const existingLedger = sessionLedgers[sessionId] || [];
@@ -5241,7 +5259,7 @@ app.post("/api/dispatch/corroborate", async (req, res) => {
   if (requester) {
     const budgetResult = checkBudget(requester.id, requester.teamId);
     if (!budgetResult.allowed) {
-      return res.status(402).json({ error: `${budgetResult.reason} (Corroboration mode uses ~2x a normal request's budget.)`, blockedBy: budgetResult.blockedBy });
+      return res.status(402).json({ error: `${budgetResult.reason} (Corroboration mode uses ~2x a normal request's budget.)`, blockedBy: budgetResult.blockedBy, errorType: "budget_exceeded", businessFriendlyMessage: budgetResult.reason });
     }
   }
 
@@ -5350,7 +5368,7 @@ app.post("/api/dispatch/relay", async (req, res) => {
   if (requester) {
     const budgetResult = checkBudget(requester.id, requester.teamId);
     if (!budgetResult.allowed) {
-      return res.status(402).json({ error: `${budgetResult.reason} (Relay mode costs roughly ${modelChain.length}x a single request's budget.)`, blockedBy: budgetResult.blockedBy });
+      return res.status(402).json({ error: `${budgetResult.reason} (Relay mode costs roughly ${modelChain.length}x a single request's budget.)`, blockedBy: budgetResult.blockedBy, errorType: "budget_exceeded", businessFriendlyMessage: budgetResult.reason });
     }
   }
 
@@ -5515,6 +5533,10 @@ app.post("/api/admin/companies", (req, res) => {
 });
 
 app.delete("/api/admin/companies/:id", (req, res) => {
+  const email = resolveAuthenticatedEmail(req);
+  const permCheck = requireCapability(email, "view_platform_console");
+  if (!permCheck.allowed) return res.status(401).json({ success: false, error: permCheck.reason });
+
   const id = req.params.id;
   if (!companies[id]) {
     return res.status(404).json({ success: false, error: "Company not found" });
@@ -5524,27 +5546,52 @@ app.delete("/api/admin/companies/:id", (req, res) => {
 });
 
 app.get("/api/admin/companies/:id", (req, res) => {
-  const comp = companies[req.params.id];
+  const email = resolveAuthenticatedEmail(req);
+  const requester = email ? getUserByEmail(email) : undefined;
+  const { id } = req.params;
+  if (!isSuperAdminEmail(email) && !(isCompanyAdmin(requester) && requester?.companyId === id)) {
+    return res.status(403).json({ error: "Only that company's admin or the super admin can view this record." });
+  }
+
+  const comp = companies[id];
   if (!comp) return res.status(404).json({ error: "Company not found" });
   res.json(comp);
 });
 
 app.patch("/api/admin/companies/:id", (req, res) => {
-  const comp = companies[req.params.id];
+  const email = resolveAuthenticatedEmail(req);
+  const requester = email ? getUserByEmail(email) : undefined;
+  const { id } = req.params;
+  if (!isSuperAdminEmail(email) && !(isCompanyAdmin(requester) && requester?.companyId === id)) {
+    return res.status(403).json({ error: "Only that company's admin or the super admin can modify this record." });
+  }
+
+  const comp = companies[id];
   if (!comp) return res.status(404).json({ error: "Company not found" });
   Object.assign(comp, req.body);
   res.json(comp);
 });
 
 app.get("/api/admin/teams", (req, res) => {
+  const email = resolveAuthenticatedEmail(req);
+  const requester = email ? getUserByEmail(email) : undefined;
   const companyId = req.query.companyId as string;
+  if (!isSuperAdminEmail(email) && !(isCompanyAdmin(requester) && requester?.companyId === companyId)) {
+    return res.status(403).json({ error: "Only that company's admin or the super admin can list its teams." });
+  }
+
   let list = Object.values(teams);
   if (companyId) list = list.filter((t) => t.companyId === companyId);
   res.json(list);
 });
 
 app.post("/api/admin/teams", (req, res) => {
+  const email = resolveAuthenticatedEmail(req);
+  const requester = email ? getUserByEmail(email) : undefined;
   const { name, companyId, allowedModelIds } = req.body;
+  if (!isSuperAdminEmail(email) && !(isCompanyAdmin(requester) && requester?.companyId === companyId)) {
+    return res.status(403).json({ error: "Only that company's admin or the super admin can create teams." });
+  }
   if (!name || !companyId) return res.status(400).json({ error: "name and companyId required" });
   const id = `team_${Date.now().toString(36)}`;
   const team: Team = {

@@ -206,7 +206,10 @@ export const RoleMatrixModal: React.FC<RoleMatrixModalProps> = ({
   activePersona,
   onSelectPersona,
   onNavigateTab,
+  realUserEmail,
 }) => {
+  const isRealSuperAdmin = !!(realUserEmail && realUserEmail.toLowerCase() === 'solarastra.in@gmail.com');
+  const isPersonaSelectable = (role: string) => isRealSuperAdmin || role === 'guest' || role === 'user';
   const [activeViewMode, setActiveViewMode] = useState<'matrix' | 'scope_comparison' | 'corporate_focus'>('matrix');
 
   if (!isOpen) return null;
@@ -356,15 +359,20 @@ export const RoleMatrixModal: React.FC<RoleMatrixModalProps> = ({
               const isCorp = p.role === 'corporate_admin';
               const isSuper = p.role === 'platform_admin';
               const isLead = p.role === 'team_admin';
+              const isSelectable = isPersonaSelectable(p.role);
 
               return (
                 <motion.button
                   key={p.id}
                   layout
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  onClick={() => onSelectPersona(p)}
-                  className={`flex flex-col p-3 rounded-xl border text-left transition-all cursor-pointer relative overflow-hidden ${
+                  whileHover={isSelectable ? { scale: 1.02 } : undefined}
+                  whileTap={isSelectable ? { scale: 0.98 } : undefined}
+                  disabled={!isSelectable}
+                  title={isSelectable ? undefined : 'Sign in as the platform super admin to preview this role'}
+                  onClick={() => { if (isSelectable) onSelectPersona(p); }}
+                  className={`flex flex-col p-3 rounded-xl border text-left transition-all relative overflow-hidden ${
+                    !isSelectable ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'
+                  } ${
                     isSelected
                       ? isCorp
                         ? 'bg-purple-500/20 border-purple-400/80 shadow-lg shadow-purple-500/20 ring-2 ring-purple-400/60'

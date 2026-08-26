@@ -55,7 +55,7 @@ import {
   formatFirebaseAuthError,
   SmtpConfigFirestore
 } from '../lib/firebase';
-import { getApiBaseUrl, setApiBaseUrl, resolveApiUrl } from '../lib/firebaseClient';
+import { getApiBaseUrl, setApiBaseUrl, resolveApiUrl, authedFetch } from '../lib/firebaseClient';
 import { User } from 'firebase/auth';
 import { CompanyTeamOnboarding } from './CompanyTeamOnboarding';
 import { EmailTemplateEditor } from './EmailTemplateEditor';
@@ -392,7 +392,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
   const handleClearEmailLogs = async () => {
     setIsClearingLogs(true);
     try {
-      await safeFetchJson('/api/admin/smtp/logs', { method: 'DELETE' });
+      await authedFetch('/api/admin/smtp/logs', { method: 'DELETE' });
       setEmailLogs([]);
       setStatusMessage({ type: 'success', text: 'Outbound dispatch logs successfully purged.' });
     } catch (err: any) {

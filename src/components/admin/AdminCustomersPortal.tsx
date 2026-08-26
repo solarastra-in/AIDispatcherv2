@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { authedFetch } from '../../lib/firebaseClient';
 import { 
   Building2, 
   Search, 
@@ -183,7 +184,7 @@ export const AdminCustomersPortal: React.FC<AdminCustomersPortalProps> = ({
         setCompanies(prev => prev.filter(c => c.id !== company.id));
 
         try {
-          fetch(`/api/admin/companies/${company.id}`, { method: 'DELETE' }).catch(() => {});
+          authedFetch(`/api/admin/companies/${company.id}`, { method: 'DELETE' }).catch(() => {});
           await deleteCompanyFromFirestore(company.id);
 
           const adminEmail = auth.currentUser?.email || 'Admin Superuser';
@@ -241,7 +242,7 @@ export const AdminCustomersPortal: React.FC<AdminCustomersPortalProps> = ({
     try {
       for (const dup of duplicatesToDelete) {
         await deleteCompanyFromFirestore(dup.id);
-        fetch(`/api/admin/companies/${dup.id}`, { method: 'DELETE' }).catch(() => {});
+        authedFetch(`/api/admin/companies/${dup.id}`, { method: 'DELETE' }).catch(() => {});
       }
       setNotification({
         type: 'success',
@@ -302,19 +303,65 @@ export const AdminCustomersPortal: React.FC<AdminCustomersPortalProps> = ({
     try {
       const thresholdPct = Math.round(((company.monthlyTokensUsed || 0) / Math.max(1, company.monthlyTokenQuota)) * 100);
       const targetEmail = company.billingEmail || company.companyAdminEmail || 'solarastra.in@gmail.com';
-      const emailResult = await sendQuotaThresholdNotification({
-        company,
-        thresholdPct,
-        sentBy: auth.currentUser?.email || 'Admin Superuser',
+      const quotaFormatted = `${(company.monthlyTokenQuota / 1_000_000).toFixed(0)}M tokens / month`;
+      const usageFormatted = `${((company.monthlyTokensUsed || 0) / 1_000_000).toFixed(2)}M tokens`;
+
+      const dynamicVars = {
+        '{{recipient_name}}': company.name + ' Billing Administrator',
+        '{{recipient_email}}': targetEmail,
+        '{{company_name}}': company.name,
+        '{{allocated_tokens}}': quotaFormatted,
+        '{{tokens_used}}': usageFormatted,
+        '{{percentage_used}}': `${thresholdPct}%`,
+        '{{budget_limit}}': `$${(company.monthlyBudgetUsd || 0).toLocaleString()} / month`,
+        '{{tier_cap}}': company.tier || 'Enterprise Tier',
+        '{{login_url}}': 'https://ais-dev-gcdyq3rgswqtgkxcjbfmqt-4552824319.us-west2.run.app',
+        '{{timestamp}}': new Date().toLocaleString(),
+        '{{custom_message}}': `Your monthly consumption for ${company.name} is currently at ${thresholdPct}% of your allocated ${quotaFormatted} quota limit.`,
+      };
+
+      const res = await authedFetch('/api/admin/smtp/send-test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: targetEmail,
+          subject: `⚠️ [WhyOr Dispatch] Quota Statement: ${company.name} reached ${thresholdPct}% monthly token consumption`,
+          templateType: 'quota_alert',
+          recipientName: company.name + ' Billing Administrator',
+          companyName: company.name,
+          allocatedTokens: quotaFormatted,
+          budgetLimit: `$${(company.monthlyBudgetUsd || 0).toLocaleString()} / month`,
+          customMessage: `Your monthly consumption for ${company.name} is currently at ${thresholdPct}% (${usageFormatted} of ${quotaFormatted} limit).`,
+          sentBy: `SuperAdmin (${auth.currentUser?.email || 'solarastra.in@gmail.com'})`,
+          variables: dynamicVars,
+        }),
       });
 
-      if (emailResult.success) {
+      const emailData = await res.json().catch(() => ({}));
+      if (res.ok && emailData.success) {
+        await logEmailToFirestore({
+          to: targetEmail,
+          from: 'WhyOr Dispatch AI Enterprise <solarastra.in@gmail.com>',
+          subject: `⚠️ [WhyOr Dispatch] Quota Statement: ${company.name} reached ${thresholdPct}%`,
+          emailType: 'quota_warning',
+          status: 'sent',
+          messageId: emailData.messageId,
+          sentBy: auth.currentUser?.email || 'solarastra.in@gmail.com',
+        });
+
+        await recordAuditLogToFirestore(
+          'Dispatch Quota Statement',
+          'smtp',
+          auth.currentUser?.email || 'solarastra.in@gmail.com',
+          `Dispatched ${thresholdPct}% usage statement to ${targetEmail} for company '${company.name}'. Message-ID: ${emailData.messageId}`
+        );
+
         setNotification({
           type: 'success',
-          text: `Usage statement dispatched to ${targetEmail} (Message-ID: ${emailResult.messageId || 'sent'}).`
+          text: `Usage statement dispatched to ${targetEmail} (Message-ID: ${emailData.messageId || 'sent'}).`
         });
       } else {
-        throw new Error(emailResult.error || 'Email dispatch failed. Please verify SMTP settings.');
+        throw new Error(emailData.error || 'Email dispatch failed. Please verify SMTP settings.');
       }
     } catch (err: any) {
       setNotification({ type: 'error', text: `Failed to dispatch email: ${err.message}` });

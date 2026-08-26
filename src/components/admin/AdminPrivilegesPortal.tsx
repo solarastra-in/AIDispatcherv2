@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { authedFetch } from '../../lib/firebaseClient';
 import { 
   ShieldCheck, 
   Users, 
@@ -601,25 +602,34 @@ export const AdminPrivilegesPortal: React.FC = () => {
         `Modified granular privileges & assigned role '${editingUser.role}' for ${editingUser.name} (${editingUser.email}) in '${editingUser.companyName}'.`
       );
 
-      // Trigger Centralized Email Notice with retry and fallback
-      sendEmailNotification({
-        to: editingUser.email,
-        subject: `[WhyOr Dispatch AI] Security Privilege & Delegated Authority Update: ${editingUser.role}`,
-        templateType: 'admin_privilege_grant',
-        recipientName: editingUser.name,
-        companyName: editingUser.companyName,
-        role: editingUser.role,
-        allocatedTokens: `${(editingUser.monthlyTokenQuota / 1_000_000).toFixed(0)}M tokens/mo`,
-        customMessage: `Dear ${editingUser.name},\n\nYour administrator privileges on WhyOr Dispatch AI for ${editingUser.companyName} have been updated by Portal SuperAdmin (${adminEmail}).\n\nAssigned Role: ${editingUser.role}\nTier Allowance: ${editingUser.tierCap}\nTeam Creation: ${editingUser.privileges.canCreateTeams ? 'Allowed (Max ' + (editingUser.privileges.maxTeamsAllowed || 'unlimited') + ')' : 'Restricted'}\nBYOK Management: ${editingUser.privileges.canConfigureBYOK ? 'Active (' + (editingUser.privileges.allowedBYOKProviders?.join(', ') || 'All') + ')' : 'Restricted'}.`,
-        sentBy: adminEmail,
-      }).catch((mailErr) => {
+      let emailNotificationError: string | null = null;
+      try {
+        const res = await authedFetch('/api/admin/smtp/send-test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            to: editingUser.email,
+            subject: `[WhyOr Dispatch AI] Security Privilege & Delegated Authority Update: ${editingUser.role}`,
+            templateType: 'admin_privilege_grant',
+            customMessage: `Dear ${editingUser.name},\n\nYour administrator privileges on WhyOr Dispatch AI for ${editingUser.companyName} have been updated by Portal SuperAdmin (${adminEmail}).\n\nAssigned Role: ${editingUser.role}\nTier Allowance: ${editingUser.tierCap}\nTeam Creation: ${editingUser.privileges.canCreateTeams ? 'Allowed (Max ' + (editingUser.privileges.maxTeamsAllowed || 'unlimited') + ')' : 'Restricted'}\nBYOK Management: ${editingUser.privileges.canConfigureBYOK ? 'Active (' + (editingUser.privileges.allowedBYOKProviders?.join(', ') || 'All') + ')' : 'Restricted'}.`,
+            sentBy: adminEmail
+          })
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          console.warn('Privilege notification email failed to send:', body.error || res.status);
+          emailNotificationError = body.error || `HTTP ${res.status}`;
+        }
+      } catch (mailErr: any) {
         console.warn('SMTP privilege notification notice:', mailErr);
-      });
+        emailNotificationError = mailErr?.message || 'network error';
+      }
 
-      setNotification({
-        type: 'success',
-        text: `Privilege matrix for '${editingUser.name}' saved and synced across cloud tenant.`
-      });
+      setNotification(
+        emailNotificationError
+          ? { type: 'error', text: `Privilege matrix for '${editingUser.name}' saved, but the notification email to ${editingUser.email} failed to send (${emailNotificationError}).` }
+          : { type: 'success', text: `Privilege matrix for '${editingUser.name}' saved and synced across cloud tenant.` }
+      );
       setEditingUser(null);
     } catch (err: any) {
       setNotification({ type: 'error', text: `Failed to update privileges: ${err.message}` });

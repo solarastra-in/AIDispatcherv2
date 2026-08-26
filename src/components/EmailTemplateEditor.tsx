@@ -37,7 +37,7 @@ import {
   SAMPLE_TEMPLATE_VARIABLES, 
   interpolateTemplate 
 } from '../lib/defaultTemplates';
-import { resolveApiUrl } from '../lib/firebaseClient';
+import { resolveApiUrl, authedFetch } from '../lib/firebaseClient';
 
 interface EmailTemplateEditorProps {
   currentUserEmail?: string;
@@ -90,7 +90,7 @@ export const EmailTemplateEditor: React.FC<EmailTemplateEditorProps> = ({
           });
         } else {
           // Fallback to server endpoint
-          const res = await fetch('/api/admin/smtp/templates');
+          const res = await authedFetch('/api/admin/smtp/templates');
           if (res.ok) {
             const data = await res.json();
             if (data.templates && Object.keys(data.templates).length > 0) {
@@ -191,7 +191,7 @@ export const EmailTemplateEditor: React.FC<EmailTemplateEditorProps> = ({
       await saveAllEmailTemplatesToFirestore(templates);
 
       // 2. Sync to Server memory vault
-      await fetch('/api/admin/smtp/templates', {
+      await authedFetch('/api/admin/smtp/templates', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ templates }),
@@ -245,7 +245,7 @@ export const EmailTemplateEditor: React.FC<EmailTemplateEditorProps> = ({
       if (onSendTestNotification) {
         data = await onSendTestNotification(selectedTemplateId, renderedSubject, renderedHtml, recipient);
       } else {
-        const res = await fetch(resolveApiUrl('/api/admin/smtp/send-test'), {
+        const res = await authedFetch('/api/admin/smtp/send-test', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
