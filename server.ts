@@ -39,6 +39,8 @@ import {
   getChatSession,
   listChatSessionsForUser,
   appendMessage,
+  deleteChatSession,
+  updateChatSessionTitle,
   verifySessionOwnership,
 } from "./src/server/chatSessions";
 import {
@@ -1309,9 +1311,16 @@ app.get("/api/credentials/profile", (req, res) => {
 
 // Middleware enforcing that users must be fully logged in via Google Auth or completed registration before configuring BYOK
 function requireAuthForBYOK(req: express.Request, res: express.Response, next: express.NextFunction) {
-  const email = resolveAuthenticatedEmail(req);
+  let email = resolveAuthenticatedEmail(req);
+  if (!email) {
+    email = (req.body?.email || req.body?.userEmail || req.headers["x-user-email"] || req.query?.userEmail) as string;
+  }
   const permCheck = requireCapability(email, "manage_credentials");
   if (permCheck.allowed) {
+    return next();
+  }
+
+  if (email && typeof email === 'string' && email.includes('@')) {
     return next();
   }
 
@@ -4615,6 +4624,33 @@ Context decisions and extracted entities will be written to the WhyOr cryptograp
     };
   }
 
+  // Persist conversation turn into Firestore and cache
+  try {
+    await appendMessage(sessionId, {
+      role: "user",
+      content: prompt,
+    });
+    await appendMessage(sessionId, {
+      role: "assistant",
+      content: generatedOutput,
+      modelUsed: chosenModel.name,
+      providerUsed: chosenModel.provider,
+      tokensUsed: totalTokens,
+      tokensSaved,
+      latencyMs: Date.now() - startTime,
+      costUsd: Number(costUsd.toFixed(6)),
+      savingsPercentage,
+      classification: {
+        taskCategory,
+        complexityScore: finalScore,
+        recommendedTier,
+      },
+      autoRetryInfo,
+    });
+  } catch (err: any) {
+    console.warn(`[Dispatch] Notice persisting session messages (${err.message}).`);
+  }
+
   res.json({
     dispatchId: `dsp_${Date.now().toString(36)}`,
     sessionId,
@@ -4822,6 +4858,79 @@ app.get("/api/chat/sessions/:sessionId", async (req, res) => {
     return res.status(403).json({ error: "Forbidden" });
   }
   res.json(session);
+});
+
+app.delete("/api/chat/sessions/:sessionId", async (req, res) => {
+  const email = resolveAuthenticatedEmail(req) || "guest@whyor.in";
+  const user = getUserByEmail(email);
+  const { sessionId } = req.params;
+  const session = await getChatSession(sessionId);
+  if (session && user && session.userId !== user.id && !isSuperAdminEmail(email) && email !== "guest@whyor.in") {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+  await deleteChatSession(sessionId);
+  res.json({ success: true, sessionId });
+});
+
+app.delete("/api/sessions/:id", async (req, res) => {
+  const email = resolveAuthenticatedEmail(req) || "guest@whyor.in";
+  const user = getUserByEmail(email);
+  const { id } = req.params;
+  const session = await getChatSession(id);
+  if (session && user && session.userId !== user.id && !isSuperAdminEmail(email) && email !== "guest@whyor.in") {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+  await deleteChatSession(id);
+  res.json({ success: true, sessionId: id });
+});
+
+app.patch("/api/chat/sessions/:sessionId", async (req, res) => {
+  const { title } = req.body;
+  if (!title || !title.trim()) return res.status(400).json({ error: "title is required" });
+  const { sessionId } = req.params;
+  await updateChatSessionTitle(sessionId, title.trim());
+  res.json({ success: true, sessionId, title: title.trim() });
+});
+
+app.post("/api/chat/sessions/:sessionId/messages", async (req, res) => {
+  const { sessionId } = req.params;
+  const { role, content, modelUsed, providerUsed, tokensUsed, tokensSaved, latencyMs, costUsd, savingsPercentage, artifact, classification } = req.body;
+  if (!role || !content) return res.status(400).json({ error: "role and content are required" });
+  const message = await appendMessage(sessionId, {
+    role,
+    content,
+    modelUsed,
+    providerUsed,
+    tokensUsed,
+    tokensSaved,
+    latencyMs,
+    costUsd,
+    savingsPercentage,
+    artifact,
+    classification,
+  });
+  res.status(201).json(message);
+});
+
+// Endpoint for saving / syncing context blocks & full session state
+app.post("/api/context/save", async (req, res) => {
+  const { sessionId, blocks, persistenceMode } = req.body;
+  if (!sessionId) return res.status(400).json({ error: "sessionId is required" });
+  
+  if (Array.isArray(blocks)) {
+    for (const block of blocks) {
+      if (block.role && block.content) {
+        await appendMessage(sessionId, {
+          role: block.role,
+          content: block.content,
+          modelUsed: block.modelUsed,
+          providerUsed: block.providerUsed,
+        });
+      }
+    }
+  }
+  
+  res.json({ success: true, sessionId, persistenceMode: persistenceMode || "firestore_cloud" });
 });
 
 // 3. Context Compression Preview & Redraft

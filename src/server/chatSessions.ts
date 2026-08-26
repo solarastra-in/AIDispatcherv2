@@ -25,6 +25,14 @@ export interface ChatMessage {
   modelUsed?: string;
   providerUsed?: string;
   tokensUsed?: number;
+  tokensSaved?: number;
+  latencyMs?: number;
+  costUsd?: number;
+  savingsPercentage?: number;
+  artifact?: any;
+  autoRetryInfo?: any;
+  attachedFiles?: any[];
+  classification?: any;
   createdAt: string;
 }
 
@@ -43,11 +51,17 @@ const MESSAGES_SUBCOLLECTION = "messages";
 const sessionStore = new Map<string, ChatSession>();
 const messagesStore = new Map<string, ChatMessage[]>();
 
-export async function createChatSession(userId: string): Promise<ChatSession> {
+export async function createChatSession(userId: string, initialTitle?: string): Promise<ChatSession> {
   const db = getDb();
   const now = new Date().toISOString();
   const docRef = db.collection(SESSIONS_COLLECTION).doc();
-  const session: ChatSession = { id: docRef.id, userId, title: "New chat", createdAt: now, updatedAt: now };
+  const session: ChatSession = { 
+    id: docRef.id, 
+    userId, 
+    title: initialTitle || "New Dispatch", 
+    createdAt: now, 
+    updatedAt: now 
+  };
 
   // Store in memory first
   sessionStore.set(session.id, session);
@@ -128,28 +142,73 @@ export async function appendMessage(sessionId: string, message: Omit<ChatMessage
   existingMessages.push(fullMessage);
   messagesStore.set(sessionId, existingMessages);
 
-  const session = sessionStore.get(sessionId);
-  if (session) {
+  let session = sessionStore.get(sessionId);
+  if (!session) {
+    session = {
+      id: sessionId,
+      userId: "guest",
+      title: message.role === "user" ? (message.content.slice(0, 50) + (message.content.length > 50 ? "…" : "")) : "New Dispatch",
+      createdAt: now,
+      updatedAt: now
+    };
+    sessionStore.set(sessionId, session);
+  } else {
     session.updatedAt = now;
-    if (session.title === "New chat" && message.role === "user") {
-      session.title = message.content.slice(0, 60) + (message.content.length > 60 ? "…" : "");
+    if ((session.title === "New chat" || session.title === "New Dispatch") && message.role === "user") {
+      session.title = message.content.slice(0, 50) + (message.content.length > 50 ? "…" : "");
     }
     sessionStore.set(sessionId, session);
   }
 
   try {
     const batch = db.batch();
+    // Ensure session doc exists
+    batch.set(sessionRef, session, { merge: true });
     batch.set(messageRef, fullMessage);
-    const updates: Partial<ChatSession> = { updatedAt: now };
-    if (session?.title) {
-      updates.title = session.title;
-    }
-    batch.update(sessionRef, updates);
     await batch.commit();
   } catch (err: any) {
     console.warn(`Notice: Could not append message to Firestore (${err.message}). Saved in memory.`);
   }
   return fullMessage;
+}
+
+export async function deleteChatSession(sessionId: string): Promise<boolean> {
+  const db = getDb();
+  sessionStore.delete(sessionId);
+  messagesStore.delete(sessionId);
+
+  try {
+    const sessionRef = db.collection(SESSIONS_COLLECTION).doc(sessionId);
+    const messagesSnapshot = await sessionRef.collection(MESSAGES_SUBCOLLECTION).get();
+    const batch = db.batch();
+    messagesSnapshot.docs.forEach((d) => batch.delete(d.ref));
+    batch.delete(sessionRef);
+    await batch.commit();
+    return true;
+  } catch (err: any) {
+    console.warn(`Notice: Could not delete session from Firestore (${err.message}). Removed from memory.`);
+    return true;
+  }
+}
+
+export async function updateChatSessionTitle(sessionId: string, title: string): Promise<boolean> {
+  const db = getDb();
+  const session = sessionStore.get(sessionId);
+  const now = new Date().toISOString();
+  if (session) {
+    session.title = title;
+    session.updatedAt = now;
+    sessionStore.set(sessionId, session);
+  }
+
+  try {
+    const sessionRef = db.collection(SESSIONS_COLLECTION).doc(sessionId);
+    await sessionRef.set({ title, updatedAt: now }, { merge: true });
+    return true;
+  } catch (err: any) {
+    console.warn(`Notice: Could not update session title in Firestore (${err.message}). Updated in memory.`);
+    return true;
+  }
 }
 
 export async function verifySessionOwnership(sessionId: string, userId: string): Promise<boolean> {

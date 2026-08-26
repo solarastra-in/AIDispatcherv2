@@ -295,7 +295,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   };
 
   return (
-    <nav className="sticky top-0 z-50 bg-slate-950/90 backdrop-blur-2xl border-b border-white/[0.08] shadow-lg shadow-black/30">
+    <nav className="w-full">
       <div className="max-w-7xl mx-auto px-2 sm:px-4 lg:px-6">
         <div className="flex items-center justify-between h-15 gap-1.5 sm:gap-2">
           

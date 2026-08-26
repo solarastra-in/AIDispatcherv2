@@ -63,7 +63,15 @@ import {
   LayoutGrid,
   Columns,
   Table,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Trash2,
+  Edit2,
+  GitFork,
+  Share2,
+  Wand2,
+  ExternalLink,
+  Layers2,
+  ArrowUpRight
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -157,6 +165,19 @@ export const DispatchConsole: React.FC<DispatchConsoleProps> = ({
   const [feedbackNotice, setFeedbackNotice] = useState<string | null>(null);
   const [isFullScreen, setIsFullScreen] = useState<boolean>(false);
 
+  // Model Re-run & Output Relay State
+  const [activeRerunMenuMessageId, setActiveRerunMenuMessageId] = useState<string | null>(null);
+  const [activeRelayMessageId, setActiveRelayMessageId] = useState<string | null>(null);
+  const [relayPreset, setRelayPreset] = useState<'critique' | 'factcheck' | 'structure' | 'summary' | 'custom'>('critique');
+  const [relayCustomInstruction, setRelayCustomInstruction] = useState<string>('');
+  const [relayTargetModelId, setRelayTargetModelId] = useState<string>('auto');
+  const [isRelaying, setIsRelaying] = useState<boolean>(false);
+
+  // Session Edit State
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [editingSessionTitle, setEditingSessionTitle] = useState<string>('');
+  const [isLoadingSession, setIsLoadingSession] = useState<boolean>(false);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -188,6 +209,87 @@ export const DispatchConsole: React.FC<DispatchConsoleProps> = ({
       }
     } catch (e) {
       console.warn('Could not load chat sessions:', e);
+    }
+  };
+
+  // Load specific conversation and its stored message history
+  const loadSession = async (sessionId: string) => {
+    if (sessionId === activeSessionId && messages.length > 0) return;
+    setIsLoadingSession(true);
+    try {
+      const res = await authedFetch(`/api/chat/sessions/${sessionId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setActiveSessionId(sessionId);
+        if (data.title) setSessionTitle(data.title);
+        
+        if (Array.isArray(data.messages)) {
+          const loaded: MessageItem[] = data.messages.map((m: any) => ({
+            id: m.id || `msg_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+            role: m.role,
+            content: m.content,
+            timestamp: m.createdAt 
+              ? new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+              : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            modelUsed: m.modelUsed,
+            providerUsed: m.providerUsed,
+            tokensUsed: m.tokensUsed,
+            tokensSaved: m.tokensSaved,
+            latencyMs: m.latencyMs,
+            costUsd: m.costUsd,
+            savingsPercentage: m.savingsPercentage,
+            artifact: m.artifact,
+            autoRetryInfo: m.autoRetryInfo,
+            attachedFiles: m.attachedFiles,
+            classification: m.classification,
+          }));
+          setMessages(loaded);
+        } else {
+          setMessages([]);
+        }
+      }
+    } catch (e) {
+      console.warn('Could not load chat session messages:', e);
+    } finally {
+      setIsLoadingSession(false);
+    }
+  };
+
+  // Delete session from database & state
+  const handleDeleteSession = async (e: React.MouseEvent, sessionId: string) => {
+    e.stopPropagation();
+    try {
+      await authedFetch(`/api/chat/sessions/${sessionId}`, { method: 'DELETE' });
+      setChatSessions(prev => prev.filter(s => s.id !== sessionId));
+      if (sessionId === activeSessionId) {
+        handleNewChat();
+      }
+      setFeedbackNotice('Conversation deleted.');
+      setTimeout(() => setFeedbackNotice(null), 2500);
+    } catch (e) {
+      console.warn('Could not delete session:', e);
+    }
+  };
+
+  // Save renamed session title
+  const handleSaveSessionTitle = async (sessionId: string) => {
+    if (!editingSessionTitle.trim()) {
+      setEditingSessionId(null);
+      return;
+    }
+    try {
+      await authedFetch(`/api/chat/sessions/${sessionId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ title: editingSessionTitle.trim() })
+      });
+      setChatSessions(prev => prev.map(s => s.id === sessionId ? { ...s, title: editingSessionTitle.trim() } : s));
+      if (sessionId === activeSessionId) {
+        setSessionTitle(editingSessionTitle.trim());
+      }
+      setEditingSessionId(null);
+    } catch (e) {
+      console.warn('Could not rename session:', e);
+      setEditingSessionId(null);
     }
   };
 
@@ -242,6 +344,78 @@ export const DispatchConsole: React.FC<DispatchConsoleProps> = ({
     navigator.clipboard.writeText(text);
     setCopiedMessageId(id);
     setTimeout(() => setCopiedMessageId(null), 2000);
+  };
+
+  // Re-run prompt with another selected AI Model
+  const handleRerunWithModel = async (messageId: string, targetModelId: string) => {
+    setActiveRerunMenuMessageId(null);
+    // Find the user prompt for this exchange
+    const targetIdx = messages.findIndex(m => m.id === messageId);
+    let promptToRerun = '';
+    if (targetIdx > 0) {
+      for (let i = targetIdx - 1; i >= 0; i--) {
+        if (messages[i].role === 'user') {
+          promptToRerun = messages[i].content;
+          break;
+        }
+      }
+    }
+    if (!promptToRerun) {
+      const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
+      promptToRerun = lastUserMsg?.content || '';
+    }
+    if (!promptToRerun) return;
+
+    setSelectedRoutingMode('enforce_model');
+    setSelectedModelId(targetModelId);
+    setSelectedModelIds([targetModelId]);
+
+    const targetModelObj = models.find(m => m.id === targetModelId);
+    setFeedbackNotice(`Re-routing prompt to ${targetModelObj?.name || targetModelId}...`);
+    setTimeout(() => setFeedbackNotice(null), 3000);
+
+    // Dispatch prompt enforcing this model
+    await handleSendMessage(promptToRerun, false, undefined, promptToRerun);
+  };
+
+  // Relay output to another AI model or Relay Studio
+  const handleRelayOutput = async (
+    sourceContent: string, 
+    sourceModelName: string,
+    instruction: string, 
+    targetModelId: string, 
+    executeMode: 'chat' | 'relay_studio'
+  ) => {
+    setActiveRelayMessageId(null);
+    if (!sourceContent) return;
+
+    if (executeMode === 'relay_studio') {
+      if (onNavigateTab) {
+        onNavigateTab('relay');
+      }
+      return;
+    }
+
+    setIsRelaying(true);
+    try {
+      // Build chained prompt for conversational relay
+      const relayPrompt = `[Context from previous AI analysis (${sourceModelName})]:\n"""\n${sourceContent}\n"""\n\n[Relay Instruction]:\n${instruction}`;
+      const displayPrompt = `🔗 **Relay from ${sourceModelName}**: ${instruction}`;
+
+      if (targetModelId && targetModelId !== 'auto') {
+        setSelectedRoutingMode('enforce_model');
+        setSelectedModelId(targetModelId);
+        setSelectedModelIds([targetModelId]);
+      } else {
+        setSelectedRoutingMode('auto');
+        setSelectedModelId('auto');
+        setSelectedModelIds([]);
+      }
+
+      await handleSendMessage(relayPrompt, false, undefined, displayPrompt);
+    } finally {
+      setIsRelaying(false);
+    }
   };
 
   // Bayesian Feedback Engine
@@ -329,6 +503,7 @@ export const DispatchConsole: React.FC<DispatchConsoleProps> = ({
       // 4. Determine endpoint: if output artifact or multimodal files attached, prefer /api/dispatch/output
       let apiResponse: any = null;
       let outputArtifact: OutputArtifact | undefined = undefined;
+      let dispatchError: { status?: number; message: string; errorType?: string } | null = null;
 
       try {
         if (effectiveFormat !== 'auto' && effectiveFormat !== 'text' || filesPayload.length > 0) {
@@ -364,6 +539,8 @@ export const DispatchConsole: React.FC<DispatchConsoleProps> = ({
             if (data.format && data.format !== 'text') {
               outputArtifact = data;
             }
+          } else {
+            dispatchError = { status: res.status, message: data.error || data.businessFriendlyMessage || `Request failed (HTTP ${res.status})`, errorType: data.errorType };
           }
         } else {
           const res = await authedFetch('/api/dispatch', {
@@ -400,10 +577,13 @@ export const DispatchConsole: React.FC<DispatchConsoleProps> = ({
 
           if (res.ok && !data.error) {
             apiResponse = data;
+          } else if (!(data.errorType === 'daily_trial_exhausted' || data.errorType === 'provider_quota_exhausted' || data.errorType === 'budget_exceeded' || res.status === 402)) {
+            dispatchError = { status: res.status, message: data.error || `Request failed (HTTP ${res.status})`, errorType: data.errorType };
           }
         }
-      } catch (e) {
-        console.warn('Live endpoint notice, fallback to local dispatch optimizer:', e);
+      } catch (e: any) {
+        console.warn('Dispatch request failed:', e);
+        dispatchError = { message: e?.message || 'Network error — the request could not be completed.' };
       }
 
       // 5. Construct Assistant Message & Ledger
@@ -433,6 +613,30 @@ export const DispatchConsole: React.FC<DispatchConsoleProps> = ({
 
         setMessages(prev => [...prev, assistantMsg]);
 
+        try {
+          const saveRes = await authedFetch('/api/context/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              sessionId: activeSessionId,
+              persistenceMode: 'firestore_cloud',
+              blocks: [
+                { role: 'user', content: textToSend },
+                { role: 'assistant', content: apiResponse.outputContent },
+              ],
+            }),
+          });
+          const saveData = await saveRes.json();
+          if (saveRes.ok && saveData.session?.id) {
+            if (saveData.session.id !== activeSessionId) {
+              setActiveSessionId(saveData.session.id);
+            }
+            refreshSessions();
+          }
+        } catch (saveErr) {
+          console.warn('Could not persist this exchange to chat history:', saveErr);
+        }
+
         if ((apiResponse.metrics?.savingsPercentage || 0) >= 50) {
           confetti({
             particleCount: 35,
@@ -442,71 +646,27 @@ export const DispatchConsole: React.FC<DispatchConsoleProps> = ({
           });
         }
       } else {
-        // Fallback simulated response
-        const inTokens = classification.estimatedInputTokens;
-        const outTokens = classification.estimatedOutputTokens;
-        const economics = calculateTokenSavings(inTokens, outTokens, candidateModel, baselineFrontierModel);
-        const tokenReduction = applyAutomatedTokenReduction(textToSend, recentLedger, classification.taskCategory);
-        const candidateResult = evaluateAllCandidateModels(models, classification, activePersona.allowedTiers);
-
-        const ledgerEntry = await createLedgerEntry(
-          activeSessionId,
-          recentLedger.length + 1,
-          recentLedger[0]?.hash || '0000000000000000000000000000000000000000000000000000000000000000',
-          textToSend,
-          candidateModel,
-          'Executed via WhyOr client routing & token compression engine.',
-          inTokens + outTokens,
-          economics.tokensSaved
-        );
-
-        const fallbackResponse: DispatchResponse = {
-          dispatchId: `dsp_${Date.now().toString(36)}`,
-          sessionId: activeSessionId,
-          classification: { ...classification, tokenReduction },
-          chosenModel: candidateModel,
-          baselineFrontierModel,
-          candidateEvaluations: candidateResult.evaluations,
-          outputContent: `I have analyzed your prompt and executed the optimal routing path.\n\n### Synthesis & Recommendations\n\n1. **Deterministic Preprocessing**: Minified context by **${tokenReduction.reductionPercentage}%** before dispatch.\n2. **Complexity Assessment**: Classified as \`${classification.taskCategory}\` (Complexity ${classification.complexityScore.toFixed(1)}/10).\n3. **Optimal Execution Model**: Routed to **${candidateModel.name}** at ${economics.savingsPercentage.toFixed(1)}% token cost reduction compared to frontier baseline.\n\n\`\`\`typescript\n// Dispatched with WhyOr multi-engine token optimization\nexport async function handleOptimizedPipeline(): Promise<void> {\n  console.log("Routed via ${candidateModel.name} with verified SLA");\n}\n\`\`\``,
-          metrics: {
-            inputTokens: inTokens,
-            outputTokens: outTokens,
-            totalTokens: inTokens + outTokens,
-            costUsd: economics.costUsd,
-            baselineCostUsd: economics.baselineCostUsd,
-            costSavingsUsd: economics.costSavingsUsd,
-            savingsPercentage: economics.savingsPercentage,
-            tokensSaved: economics.tokensSaved,
-            latencyMs: candidateModel.latencyAvgMs,
-          },
-          ledgerEntry,
-          executionStatus: 'success'
-        };
-
-        setLatestDispatchResponse(fallbackResponse);
-        onNewLedgerEntry(ledgerEntry);
-
-        const assistantMsg: MessageItem = {
-          id: `msg_asst_${Date.now()}`,
+        const errorMsg: MessageItem = {
+          id: `msg_err_${Date.now()}`,
           role: 'assistant',
-          content: fallbackResponse.outputContent,
+          content: `⚠️ **Dispatch failed.** ${dispatchError?.message || 'The request could not be completed.'}\n\nNothing was generated — please try again, or contact your admin if this continues.`,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           modelUsed: candidateModel.name,
           providerUsed: candidateModel.provider,
-          latencyMs: candidateModel.latencyAvgMs,
-          tokensSaved: economics.tokensSaved,
-          savingsPercentage: economics.savingsPercentage,
-          costUsd: economics.costUsd,
-          baselineCostUsd: economics.baselineCostUsd,
           classification,
-          artifact: outputArtifact,
-          showDetails: false
+          showDetails: false,
         };
-
-        setMessages(prev => [...prev, assistantMsg]);
+        setMessages(prev => [...prev, errorMsg]);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Dispatch error:', err);
+      setMessages(prev => [...prev, {
+        id: `msg_err_${Date.now()}`,
+        role: 'assistant',
+        content: `⚠️ **Dispatch failed.** ${err?.message || 'An unexpected error occurred.'}\n\nPlease try again.`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        showDetails: false,
+      } as MessageItem]);
     } finally {
       setIsDispatching(false);
       window.dispatchEvent(new CustomEvent('daily-quota-updated'));
@@ -559,7 +719,7 @@ export const DispatchConsole: React.FC<DispatchConsoleProps> = ({
     <div className={`flex w-full overflow-hidden bg-slate-950 text-slate-100 transition-all duration-200 ${
       isFullScreen 
         ? 'fixed inset-0 z-[99999] h-screen w-screen rounded-none border-none shadow-none' 
-        : 'h-[calc(100vh-5.5rem)] min-h-[640px] rounded-3xl border border-white/10 shadow-2xl relative'
+        : 'h-[calc(100vh-8.5rem)] lg:h-[calc(100vh-9.5rem)] min-h-[580px] rounded-3xl border border-white/10 shadow-2xl relative'
     }`}>
       
       {/* 1. COLLAPSIBLE CONVERSATION HISTORY SIDEBAR */}
@@ -602,22 +762,65 @@ export const DispatchConsole: React.FC<DispatchConsoleProps> = ({
           ) : (
             chatSessions.map((session) => {
               const isActive = session.id === activeSessionId;
+              const isEditing = editingSessionId === session.id;
               return (
-                <button
+                <div
                   key={session.id}
                   onClick={() => {
-                    setActiveSessionId(session.id);
-                    setSessionTitle(session.title);
+                    if (!isEditing) {
+                      loadSession(session.id);
+                    }
                   }}
-                  className={`w-full text-left px-3 py-2.5 rounded-xl text-xs flex items-center gap-2.5 transition-all cursor-pointer truncate ${
+                  className={`group relative w-full rounded-xl transition-all flex items-center justify-between text-xs cursor-pointer ${
                     isActive
                       ? 'bg-amber-500/15 border border-amber-500/30 text-white font-medium shadow-sm'
                       : 'text-slate-400 hover:text-slate-200 hover:bg-white/5 border border-transparent'
                   }`}
                 >
-                  <MessageSquare className={`w-3.5 h-3.5 shrink-0 ${isActive ? 'text-amber-400' : 'text-slate-400'}`} />
-                  <span className="truncate flex-1">{session.title}</span>
-                </button>
+                  <div className="flex items-center gap-2.5 px-3 py-2.5 flex-1 min-w-0">
+                    <MessageSquare className={`w-3.5 h-3.5 shrink-0 ${isActive ? 'text-amber-400' : 'text-slate-400'}`} />
+                    {isEditing ? (
+                      <input
+                        type="text"
+                        value={editingSessionTitle}
+                        onChange={(e) => setEditingSessionTitle(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleSaveSessionTitle(session.id);
+                          if (e.key === 'Escape') setEditingSessionId(null);
+                        }}
+                        onBlur={() => handleSaveSessionTitle(session.id)}
+                        autoFocus
+                        onClick={(e) => e.stopPropagation()}
+                        className="w-full bg-slate-900 border border-amber-500/50 rounded px-1.5 py-0.5 text-xs text-white outline-none"
+                      />
+                    ) : (
+                      <span className="truncate flex-1">{session.title}</span>
+                    )}
+                  </div>
+
+                  {!isEditing && (
+                    <div className="hidden group-hover:flex items-center gap-1 pr-2">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditingSessionId(session.id);
+                          setEditingSessionTitle(session.title);
+                        }}
+                        className="p-1 text-slate-400 hover:text-white hover:bg-white/10 rounded transition-colors"
+                        title="Rename session"
+                      >
+                        <Edit2 className="w-3 h-3" />
+                      </button>
+                      <button
+                        onClick={(e) => handleDeleteSession(e, session.id)}
+                        className="p-1 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded transition-colors"
+                        title="Delete session"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  )}
+                </div>
               );
             })
           )}
@@ -1054,21 +1257,119 @@ export const DispatchConsole: React.FC<DispatchConsoleProps> = ({
                               <div className="flex flex-col gap-2 pt-1">
                                 <div className="flex items-center justify-between flex-wrap gap-2 text-xs font-mono text-slate-400">
                                   <div className="flex items-center gap-2 flex-wrap">
-                                    <span className="px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-300 font-semibold text-[11px]">
-                                      ✨ {msg.modelUsed || 'Auto-Routed'}
+                                    <span className="px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/25 text-amber-300 font-semibold text-[11px] flex items-center gap-1.5 shadow-sm">
+                                      <Sparkles className="w-3 h-3 text-amber-400" />
+                                      <span>{msg.modelUsed || 'WhyOr Auto-Routed'}</span>
+                                      {msg.providerUsed && (
+                                        <span className="text-[10px] text-slate-400 uppercase tracking-wider font-normal">({msg.providerUsed})</span>
+                                      )}
                                     </span>
                                     {msg.latencyMs && (
-                                      <span>{msg.latencyMs}ms</span>
+                                      <span className="px-2 py-0.5 rounded-md bg-white/5 text-[11px] text-slate-300 flex items-center gap-1">
+                                        <Clock className="w-3 h-3 text-slate-400" /> {msg.latencyMs}ms
+                                      </span>
                                     )}
                                     {msg.savingsPercentage !== undefined && (
-                                      <span className="text-emerald-400 font-bold">
-                                        {msg.savingsPercentage.toFixed(1)}% saved
+                                      <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-bold text-[11px] flex items-center gap-1">
+                                        <TrendingDown className="w-3 h-3" /> {msg.savingsPercentage.toFixed(1)}% saved
+                                      </span>
+                                    )}
+                                    {msg.costUsd !== undefined && (
+                                      <span className="text-[10px] text-slate-400">
+                                        ${msg.costUsd.toFixed(5)}
                                       </span>
                                     )}
                                   </div>
 
-                                  {/* Actions (Copy, Feedback, Reroute) */}
-                                  <div className="flex items-center gap-1">
+                                  {/* Actions (Try Another Model, Relay, Copy, Feedback) */}
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    {/* 1. Try with Another Model Menu Button */}
+                                    <div className="relative">
+                                      <button
+                                        onClick={() => {
+                                          setActiveRelayMessageId(null);
+                                          setActiveRerunMenuMessageId(activeRerunMenuMessageId === msg.id ? null : msg.id);
+                                        }}
+                                        className={`px-2.5 py-1 rounded-lg text-[11px] font-medium flex items-center gap-1.5 transition-all cursor-pointer ${
+                                          activeRerunMenuMessageId === msg.id
+                                            ? 'bg-amber-500/20 text-amber-200 border border-amber-500/40 shadow-sm'
+                                            : 'bg-white/5 hover:bg-white/10 text-amber-300 border border-amber-500/20'
+                                        }`}
+                                        title="Re-run prompt with a different AI model"
+                                      >
+                                        <RotateCcw className="w-3 h-3" />
+                                        <span>Try Another Model</span>
+                                        <ChevronDown className={`w-3 h-3 transition-transform ${activeRerunMenuMessageId === msg.id ? 'rotate-180' : ''}`} />
+                                      </button>
+
+                                      {/* Dropdown Menu for Model Selection */}
+                                      {activeRerunMenuMessageId === msg.id && (
+                                        <div className="absolute right-0 bottom-full mb-2 w-72 bg-slate-900 border border-white/15 rounded-2xl shadow-2xl p-2 z-50 animate-in fade-in zoom-in-95">
+                                          <div className="px-2 py-1.5 border-b border-white/10 text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center justify-between">
+                                            <span>Switch AI Model & Re-run</span>
+                                            <button 
+                                              onClick={() => setActiveRerunMenuMessageId(null)}
+                                              className="p-0.5 hover:text-white rounded"
+                                            >
+                                              <X className="w-3 h-3" />
+                                            </button>
+                                          </div>
+                                          
+                                          <div className="max-h-60 overflow-y-auto py-1 space-y-1 scrollbar-thin">
+                                            {models.filter(m => m.status === 'active').map((mod) => {
+                                              const isCurrent = (msg.modelUsed || '').toLowerCase().includes(mod.id.toLowerCase()) || (msg.modelUsed || '').toLowerCase().includes(mod.name.toLowerCase());
+                                              return (
+                                                <button
+                                                  key={mod.id}
+                                                  disabled={isCurrent}
+                                                  onClick={() => handleRerunWithModel(msg.id, mod.id)}
+                                                  className={`w-full text-left p-2 rounded-xl text-xs flex items-center justify-between transition-colors cursor-pointer ${
+                                                    isCurrent
+                                                      ? 'opacity-50 bg-white/5 cursor-not-allowed text-slate-400'
+                                                      : 'hover:bg-amber-500/15 hover:text-amber-200 text-slate-200'
+                                                  }`}
+                                                >
+                                                  <div className="min-w-0 pr-2">
+                                                    <div className="font-semibold truncate flex items-center gap-1.5">
+                                                      <span>{mod.name}</span>
+                                                      {isCurrent && <span className="text-[10px] text-amber-400 font-normal">(Current)</span>}
+                                                    </div>
+                                                    <div className="text-[10px] text-slate-400 flex items-center gap-2">
+                                                      <span className="capitalize">{mod.provider}</span>
+                                                      <span>•</span>
+                                                      <span className="uppercase text-[9px] font-mono px-1 rounded bg-white/5">{mod.tier}</span>
+                                                    </div>
+                                                  </div>
+                                                  <div className="text-right text-[10px] font-mono shrink-0">
+                                                    <span className="text-emerald-400">${(mod.inputPricePerM + mod.outputPricePerM).toFixed(2)}/M</span>
+                                                  </div>
+                                                </button>
+                                              );
+                                            })}
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+
+                                    {/* 2. Relay Output to Another Model Button */}
+                                    <button
+                                      onClick={() => {
+                                        setActiveRerunMenuMessageId(null);
+                                        setActiveRelayMessageId(activeRelayMessageId === msg.id ? null : msg.id);
+                                      }}
+                                      className={`px-2.5 py-1 rounded-lg text-[11px] font-medium flex items-center gap-1.5 transition-all cursor-pointer ${
+                                        activeRelayMessageId === msg.id
+                                          ? 'bg-orange-500/20 text-orange-200 border border-orange-500/40 shadow-sm'
+                                          : 'bg-orange-500/10 hover:bg-orange-500/20 text-orange-300 border border-orange-500/20'
+                                      }`}
+                                      title="Relay this output to another AI model for refinement, fact-checking, or structure"
+                                    >
+                                      <GitFork className="w-3 h-3" />
+                                      <span>Relay Output</span>
+                                      <ChevronDown className={`w-3 h-3 transition-transform ${activeRelayMessageId === msg.id ? 'rotate-180' : ''}`} />
+                                    </button>
+
+                                    {/* Copy Button */}
                                     <button
                                       onClick={() => handleCopyMessage(msg.content, msg.id)}
                                       className="p-1.5 hover:text-white rounded-lg hover:bg-white/5 transition-colors cursor-pointer"
@@ -1077,6 +1378,7 @@ export const DispatchConsole: React.FC<DispatchConsoleProps> = ({
                                       {copiedMessageId === msg.id ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                                     </button>
 
+                                    {/* Upvote Button */}
                                     <button
                                       onClick={() => handleFeedback(msg.id, 'EXPLICIT_THUMBS', msg.modelUsed || 'model', true)}
                                       className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
@@ -1087,6 +1389,7 @@ export const DispatchConsole: React.FC<DispatchConsoleProps> = ({
                                       <ThumbsUp className="w-3.5 h-3.5" />
                                     </button>
 
+                                    {/* Downvote Button */}
                                     <button
                                       onClick={() => handleFeedback(msg.id, 'EXPLICIT_THUMBS', msg.modelUsed || 'model', false)}
                                       className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
@@ -1096,22 +1399,148 @@ export const DispatchConsole: React.FC<DispatchConsoleProps> = ({
                                     >
                                       <ThumbsDown className="w-3.5 h-3.5" />
                                     </button>
-
-                                    <button
-                                      onClick={() => {
-                                        const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
-                                        if (lastUserMsg) {
-                                          handleSendMessage(lastUserMsg.content, true);
-                                        }
-                                      }}
-                                      className="p-1.5 hover:text-amber-300 rounded-lg hover:bg-white/5 transition-colors cursor-pointer text-[11px] flex items-center gap-1"
-                                      title="Reroute with Frontier Model (Claude 3.7 Sonnet)"
-                                    >
-                                      <RotateCcw className="w-3.5 h-3.5" />
-                                      <span className="hidden sm:inline">Reroute Frontier</span>
-                                    </button>
                                   </div>
                                 </div>
+
+                                {/* 3. Interactive Relay Popover Drawer */}
+                                {activeRelayMessageId === msg.id && (
+                                  <div className="mt-2 p-3.5 rounded-2xl bg-slate-900/95 border border-orange-500/30 shadow-xl space-y-3 animate-in fade-in slide-in-from-top-2">
+                                    <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                                      <div className="flex items-center gap-2">
+                                        <div className="w-6 h-6 rounded-lg bg-orange-500/20 text-orange-400 flex items-center justify-center">
+                                          <GitFork className="w-3.5 h-3.5" />
+                                        </div>
+                                        <span className="font-bold text-xs text-white">WhyOr Sequential Relay</span>
+                                        <span className="text-[10px] text-slate-400 font-mono">Chain output to another model</span>
+                                      </div>
+                                      <button
+                                        onClick={() => setActiveRelayMessageId(null)}
+                                        className="p-1 text-slate-400 hover:text-white rounded-lg transition-colors cursor-pointer"
+                                      >
+                                        <X className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
+
+                                    {/* Preset Action Pills */}
+                                    <div>
+                                      <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1.5">
+                                        1. Choose Relay Action
+                                      </label>
+                                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                                        {[
+                                          { id: 'critique', label: 'Refine & Critique', icon: Wand2, text: 'Critique the previous response, identify edge cases or weaknesses, and output an improved version.' },
+                                          { id: 'factcheck', label: 'Fact-Check & Verify', icon: ShieldCheck, text: 'Fact-check and verify all assertions, citations, numbers, and logical deductions in the previous response.' },
+                                          { id: 'structure', label: 'Format JSON / Table', icon: Table, text: 'Extract core entities, metrics, and actionable items from the previous response and format as a structured markdown table and JSON.' },
+                                          { id: 'summary', label: 'Executive Brief', icon: FileText, text: 'Synthesize the previous output into an executive 3-bullet decision brief with key takeaways.' },
+                                        ].map((p) => {
+                                          const Icon = p.icon;
+                                          const isSelected = relayPreset === p.id;
+                                          return (
+                                            <button
+                                              key={p.id}
+                                              type="button"
+                                              onClick={() => {
+                                                setRelayPreset(p.id as any);
+                                                setRelayCustomInstruction(p.text);
+                                              }}
+                                              className={`p-2 rounded-xl text-left border text-xs transition-all cursor-pointer flex flex-col gap-1 ${
+                                                isSelected
+                                                  ? 'bg-orange-500/20 border-orange-500/50 text-white font-medium shadow-sm'
+                                                  : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
+                                              }`}
+                                            >
+                                              <div className="flex items-center gap-1.5">
+                                                <Icon className={`w-3.5 h-3.5 ${isSelected ? 'text-orange-400' : 'text-slate-400'}`} />
+                                                <span className="text-[11px] font-semibold truncate">{p.label}</span>
+                                              </div>
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+
+                                    {/* Custom / Editable Instruction */}
+                                    <div>
+                                      <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
+                                        Relay Instruction Prompt
+                                      </label>
+                                      <textarea
+                                        value={relayCustomInstruction || (
+                                          relayPreset === 'critique' ? 'Critique the previous response, identify edge cases or weaknesses, and output an improved version.' :
+                                          relayPreset === 'factcheck' ? 'Fact-check and verify all assertions, citations, numbers, and logical deductions in the previous response.' :
+                                          relayPreset === 'structure' ? 'Extract core entities, metrics, and actionable items from the previous response and format as a structured markdown table and JSON.' :
+                                          'Synthesize the previous output into an executive 3-bullet decision brief with key takeaways.'
+                                        )}
+                                        onChange={(e) => {
+                                          setRelayCustomInstruction(e.target.value);
+                                          setRelayPreset('custom');
+                                        }}
+                                        rows={2}
+                                        className="w-full bg-slate-950 border border-white/10 rounded-xl p-2.5 text-xs text-slate-100 placeholder-slate-500 focus:border-orange-500/50 focus:outline-none resize-none font-sans"
+                                        placeholder="Customize what the next AI model should do with this output..."
+                                      />
+                                    </div>
+
+                                    {/* Step 2: Target Model & Action Buttons */}
+                                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pt-1">
+                                      <div className="flex items-center gap-2">
+                                        <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 shrink-0">
+                                          2. Target Model:
+                                        </label>
+                                        <select
+                                          value={relayTargetModelId}
+                                          onChange={(e) => setRelayTargetModelId(e.target.value)}
+                                          className="bg-slate-950 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:border-orange-500/50 focus:outline-none cursor-pointer"
+                                        >
+                                          <option value="auto">🤖 Auto-Select Best Model (WhyOr Engine)</option>
+                                          {models.filter(m => m.status === 'active').map((m) => (
+                                            <option key={m.id} value={m.id}>
+                                              {m.name} ({m.provider} · {m.tier.toUpperCase()})
+                                            </option>
+                                          ))}
+                                        </select>
+                                      </div>
+
+                                      <div className="flex items-center gap-2">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const inst = relayCustomInstruction || (
+                                              relayPreset === 'critique' ? 'Critique the previous response, identify edge cases or weaknesses, and output an improved version.' :
+                                              relayPreset === 'factcheck' ? 'Fact-check and verify all assertions, citations, numbers, and logical deductions in the previous response.' :
+                                              relayPreset === 'structure' ? 'Extract core entities, metrics, and actionable items from the previous response and format as a structured markdown table and JSON.' :
+                                              'Synthesize the previous output into an executive 3-bullet decision brief with key takeaways.'
+                                            );
+                                            handleRelayOutput(msg.content, msg.modelUsed || 'AI Model', inst, relayTargetModelId, 'chat');
+                                          }}
+                                          disabled={isRelaying || isDispatching}
+                                          className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 transition-all shadow-md shadow-orange-500/20 cursor-pointer disabled:opacity-50"
+                                        >
+                                          <Zap className="w-3.5 h-3.5 fill-current" />
+                                          <span>Run Relay in Chat</span>
+                                        </button>
+
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const inst = relayCustomInstruction || (
+                                              relayPreset === 'critique' ? 'Critique the previous response, identify edge cases or weaknesses, and output an improved version.' :
+                                              relayPreset === 'factcheck' ? 'Fact-check and verify all assertions, citations, numbers, and logical deductions in the previous response.' :
+                                              relayPreset === 'structure' ? 'Extract core entities, metrics, and actionable items from the previous response and format as a structured markdown table and JSON.' :
+                                              'Synthesize the previous output into an executive 3-bullet decision brief with key takeaways.'
+                                            );
+                                            handleRelayOutput(msg.content, msg.modelUsed || 'AI Model', inst, relayTargetModelId, 'relay_studio');
+                                          }}
+                                          className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs flex items-center gap-1 transition-colors cursor-pointer"
+                                          title="Open in WhyOr Relay Studio workspace"
+                                        >
+                                          <span>Relay Studio</span>
+                                          <ArrowUpRight className="w-3 h-3" />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
 
                                 {/* Failover Notice If Triggered */}
                                 {msg.autoRetryInfo?.triggered && (

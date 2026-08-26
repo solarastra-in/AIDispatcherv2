@@ -152,16 +152,21 @@ export function onAuthChanged(callback: (user: User | null) => void) {
 
 // User Profile Firestore Sync
 export async function saveUserProfile(user: User, role: string) {
-  const userRef = doc(db, 'users', user.uid);
-  await setDoc(userRef, {
-    uid: user.uid,
-    email: user.email,
-    displayName: user.displayName || user.email?.split('@')[0] || 'Admin',
-    photoURL: user.photoURL || '',
-    role: user.email === 'solarastra.in@gmail.com' ? 'superadmin' : role,
-    lastLoginAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  }, { merge: true });
+  try {
+    const userRef = doc(db, 'users', user.uid);
+    const resolvedRole = user.email === 'solarastra.in@gmail.com' ? 'super_admin' : (role || 'user');
+    await setDoc(userRef, {
+      uid: user.uid,
+      email: user.email,
+      displayName: user.displayName || user.email?.split('@')[0] || 'Admin',
+      photoURL: user.photoURL || '',
+      role: resolvedRole,
+      lastLoginAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }, { merge: true });
+  } catch (err: any) {
+    console.warn('saveUserProfile notice:', err.message);
+  }
 }
 
 // ==================== LOCAL STORAGE CACHE & FALLBACK HELPERS ====================
@@ -190,20 +195,39 @@ function safeStorageSet<T>(key: string, val: T): void {
  
 // 1. Credentials Persistence
 export async function saveCredentialToFirestore(provider: string, data: any) {
-  const credRef = doc(db, 'credentials', provider);
-  await setDoc(credRef, {
+  const merged = {
     ...data,
     provider,
     updatedAt: new Date().toISOString(),
-  }, { merge: true });
+  };
+  safeStorageSet(`whyor_cred_${provider}`, merged);
+  try {
+    const credRef = doc(db, 'credentials', provider);
+    await setDoc(credRef, merged, { merge: true });
+  } catch (err: any) {
+    console.warn('Firestore credential write notice (cached locally):', err.message);
+  }
 }
 
 export async function loadAllCredentialsFromFirestore(): Promise<Record<string, any>> {
-  const snap = await getDocs(collection(db, 'credentials'));
   const result: Record<string, any> = {};
-  snap.forEach((docSnap) => {
-    result[docSnap.id] = docSnap.data();
-  });
+  try {
+    const snap = await getDocs(collection(db, 'credentials'));
+    snap.forEach((docSnap) => {
+      result[docSnap.id] = docSnap.data();
+    });
+  } catch (err: any) {
+    console.warn('Firestore credentials load notice (using cache):', err.message);
+  }
+
+  // Merge with local storage cache
+  const defaultProviders = ['google', 'anthropic', 'openai', 'deepseek', 'groq', 'mistral', 'xai'];
+  for (const prov of defaultProviders) {
+    const cached = safeStorageGet<any>(`whyor_cred_${prov}`, null);
+    if (cached && !result[prov]) {
+      result[prov] = cached;
+    }
+  }
   return result;
 }
 
@@ -1021,75 +1045,89 @@ export async function saveAdminKeyConfigToFirestore(config: AdminKeyConfig): Pro
     lastUpdated: new Date().toISOString(),
   };
 
-  const docRef = doc(db, 'admin_ai_keys', config.id);
-  await setDoc(docRef, payload, { merge: true });
+  safeStorageSet(`whyor_adminkey_${config.id}`, payload);
+  try {
+    const docRef = doc(db, 'admin_ai_keys', config.id);
+    await setDoc(docRef, payload, { merge: true });
+  } catch (err: any) {
+    console.warn('Firestore admin key write notice (cached locally):', err.message);
+  }
 }
 
 export async function loadAdminKeyConfigsFromFirestore(): Promise<AdminKeyConfig[]> {
-  const snap = await getDocs(collection(db, 'admin_ai_keys'));
-  if (!snap.empty) {
-    const configs: AdminKeyConfig[] = [];
-    snap.forEach((d) => {
-      const data = d.data() as AdminKeyConfig;
-      const monthlyLimit = data.monthlyBudgetLimit ?? data.monthlyBudgetCents ?? 500;
-      const currentSpend = data.currentSpend ?? data.currentMonthlySpendUsd ?? 0;
-      const dailyLimit = data.dailyUsageLimit ?? data.dailyUsageLimitUsd ?? 50;
-      const todaySpend = data.todaySpend ?? data.todaySpendUsd ?? 0;
+  try {
+    const snap = await getDocs(collection(db, 'admin_ai_keys'));
+    if (!snap.empty) {
+      const configs: AdminKeyConfig[] = [];
+      snap.forEach((d) => {
+        const data = d.data() as AdminKeyConfig;
+        const monthlyLimit = data.monthlyBudgetLimit ?? data.monthlyBudgetCents ?? 500;
+        const currentSpend = data.currentSpend ?? data.currentMonthlySpendUsd ?? 0;
+        const dailyLimit = data.dailyUsageLimit ?? data.dailyUsageLimitUsd ?? 50;
+        const todaySpend = data.todaySpend ?? data.todaySpendUsd ?? 0;
 
-      const isBudgetOver = monthlyLimit > 0 && currentSpend >= monthlyLimit;
-      const isDayUsageOver = dailyLimit > 0 && todaySpend >= dailyLimit;
-      
-      const hasKey = Boolean(data.apiKey && data.apiKey.trim().length > 0);
-      const hasSub = Boolean(data.hasSubscription && (data.subscriptionTier || data.sessionTokenMasked || data.subscriptionEmail));
-      const isConfigured = hasKey || hasSub;
+        const isBudgetOver = monthlyLimit > 0 && currentSpend >= monthlyLimit;
+        const isDayUsageOver = dailyLimit > 0 && todaySpend >= dailyLimit;
+        
+        const hasKey = Boolean(data.apiKey && data.apiKey.trim().length > 0);
+        const hasSub = Boolean(data.hasSubscription && (data.subscriptionTier || data.sessionTokenMasked || data.subscriptionEmail));
+        const isConfigured = hasKey || hasSub;
 
-      let status = data.status;
-      let isActive = Boolean(data.isActive);
-      if (!isConfigured) {
-        status = 'unconfigured';
-        isActive = false;
-      } else if (isBudgetOver) {
-        status = 'budget_exceeded';
-      } else if (isDayUsageOver) {
-        status = 'day_limit_exceeded';
-      } else {
-        status = 'active';
-        isActive = true;
-      }
+        let status = data.status;
+        let isActive = Boolean(data.isActive);
+        if (!isConfigured) {
+          status = 'unconfigured';
+          isActive = false;
+        } else if (isBudgetOver) {
+          status = 'budget_exceeded';
+        } else if (isDayUsageOver) {
+          status = 'day_limit_exceeded';
+        } else {
+          status = 'active';
+          isActive = true;
+        }
 
-      configs.push({
-        ...data,
-        apiKey: data.apiKey?.trim() || '',
-        hasSubscription: hasSub,
-        isActive,
-        status,
-        providerName: data.providerName || data.providerDisplayName || data.provider,
-        modelFamily: data.modelFamily || data.provider,
-        monthlyBudgetLimit: monthlyLimit,
-        monthlyBudgetCents: monthlyLimit,
-        currentSpend: currentSpend,
-        currentMonthlySpendUsd: currentSpend,
-        dailyUsageLimit: dailyLimit,
-        dailyUsageLimitUsd: dailyLimit,
-        todaySpend: todaySpend,
-        todaySpendUsd: todaySpend,
-        isBudgetOver,
-        isDayUsageOver,
+        configs.push({
+          ...data,
+          apiKey: data.apiKey?.trim() || '',
+          hasSubscription: hasSub,
+          isActive,
+          status,
+          providerName: data.providerName || data.providerDisplayName || data.provider,
+          modelFamily: data.modelFamily || data.provider,
+          monthlyBudgetLimit: monthlyLimit,
+          monthlyBudgetCents: monthlyLimit,
+          currentSpend: currentSpend,
+          currentMonthlySpendUsd: currentSpend,
+          dailyUsageLimit: dailyLimit,
+          dailyUsageLimitUsd: dailyLimit,
+          todaySpend: todaySpend,
+          todaySpendUsd: todaySpend,
+          isBudgetOver,
+          isDayUsageOver,
+        });
       });
-    });
-    
-    // Ensure all default providers exist if missing from Firestore
-    const loadedMap = new Map(configs.map(c => [c.id, c]));
-    for (const def of DEFAULT_ADMIN_KEYS) {
-      if (!loadedMap.has(def.id)) {
-        configs.push({ ...def, status: 'unconfigured', isActive: false, apiKey: '', hasSubscription: false });
+      
+      // Ensure all default providers exist if missing from Firestore
+      const loadedMap = new Map(configs.map(c => [c.id, c]));
+      for (const def of DEFAULT_ADMIN_KEYS) {
+        if (!loadedMap.has(def.id)) {
+          const cached = safeStorageGet<AdminKeyConfig | null>(`whyor_adminkey_${def.id}`, null);
+          configs.push(cached || { ...def, status: 'unconfigured', isActive: false, apiKey: '', hasSubscription: false });
+        }
       }
-    }
 
-    return configs;
+      return configs;
+    }
+  } catch (err: any) {
+    console.warn('Firestore admin keys load notice (using cache):', err.message);
   }
 
-  return DEFAULT_ADMIN_KEYS;
+  const mergedConfigs = DEFAULT_ADMIN_KEYS.map((def) => {
+    const cached = safeStorageGet<AdminKeyConfig | null>(`whyor_adminkey_${def.id}`, null);
+    return cached || def;
+  });
+  return mergedConfigs;
 }
 
 export async function savePaymentInvoiceToFirestore(invoice: any): Promise<void> {

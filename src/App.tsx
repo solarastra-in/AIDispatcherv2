@@ -295,11 +295,11 @@ export default function App() {
         <div className="absolute inset-0 bg-[linear-gradient(to_right,#ffffff05_1px,transparent_1px),linear-gradient(to_bottom,#ffffff05_1px,transparent_1px)] bg-[size:48px_48px] opacity-40" />
       </div>
 
-      {/* Top Navbar */}
-      <div className="relative z-50">
+      {/* Top Navbar - Sticky across all pages and views */}
+      <header className="sticky top-0 z-50 w-full backdrop-blur-2xl bg-[#0b0f19]/90 border-b border-white/[0.08]">
         <Navbar
           currentTab={currentTab}
-          setCurrentTab={setCurrentTab}
+          setCurrentTab={handleNavigateTab}
           activePersona={activePersona}
           setActivePersona={setActivePersona}
           onOpenApiExplorer={() => setIsApiExplorerOpen(true)}
@@ -308,7 +308,7 @@ export default function App() {
           onOpenRoleMatrix={() => setIsRoleMatrixOpen(true)}
           onOpenCompanyAdminWizard={() => setIsCompanyAdminWizardOpen(true)}
         />
-      </div>
+      </header>
 
       {/* Main Content Area */}
       <main className="relative z-10 flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
@@ -333,7 +333,7 @@ export default function App() {
 
         {/* 7-Day Free Trial Visual Progress Bar & Pro Upgrade Bar */}
         <TrialProgressBarHeader 
-          onNavigateTab={setCurrentTab}
+          onNavigateTab={handleNavigateTab}
           activePersonaEmail={activePersona.email}
         />
 
@@ -357,7 +357,7 @@ export default function App() {
               models={models}
               onSelectModelForDispatch={(modelId) => {
                 setPrefilledModelId(modelId);
-                setCurrentTab('dispatch');
+                handleNavigateTab('dispatch');
               }}
             />
           </div>
@@ -368,7 +368,7 @@ export default function App() {
           <LiveDispatchBoard 
             onSelectPrompt={(p) => {
               setPrefilledPrompt(p);
-              setCurrentTab('dispatch');
+              handleNavigateTab('dispatch');
             }}
           />
         )}
@@ -378,7 +378,7 @@ export default function App() {
           <PageAccessGuard
             tabId={currentTab}
             activePersona={activePersona}
-            onNavigateTab={setCurrentTab}
+            onNavigateTab={handleNavigateTab}
             onOpenAuthGate={() => setIsAuthGateOpen(true)}
             onOpenRoleMatrix={() => setIsRoleMatrixOpen(true)}
           />
@@ -392,7 +392,7 @@ export default function App() {
                 firebaseUser={firebaseUser}
                 onNewLedgerEntry={handleNewLedgerEntry}
                 recentLedger={ledger}
-                onNavigateTab={setCurrentTab}
+                onNavigateTab={handleNavigateTab}
                 prefilledPrompt={prefilledPrompt}
                 prefilledModelId={prefilledModelId}
                 onClearPrefill={() => {
@@ -408,12 +408,12 @@ export default function App() {
                 feedbackEngine={apiService.feedbackEngine}
                 models={models}
                 activePersona={activePersona}
-                onNavigateTab={setCurrentTab}
+                onNavigateTab={handleNavigateTab}
                 onOpenAuthGate={() => setIsAuthGateOpen(true)}
                 onSelectModelForDispatch={(modelId, prompt) => {
                   if (prompt) setPrefilledPrompt(prompt);
                   if (modelId) setPrefilledModelId(modelId);
-                  setCurrentTab('dispatch');
+                  handleNavigateTab('dispatch');
                 }}
               />
             )}
@@ -423,7 +423,7 @@ export default function App() {
                 onNavigateToDispatch={(p, m) => {
                   if (p) setPrefilledPrompt(p);
                   if (m) setPrefilledModelId(m);
-                  setCurrentTab('dispatch');
+                  handleNavigateTab('dispatch');
                 }}
                 onOpenAuthGate={() => setIsAuthGateOpen(true)}
                 activePersona={activePersona}
@@ -436,12 +436,12 @@ export default function App() {
                 activePersona={activePersona}
                 ledger={ledger}
                 models={models}
-                onNavigateTab={setCurrentTab}
+                onNavigateTab={handleNavigateTab}
                 onOpenAuthGate={() => setIsAuthGateOpen(true)}
                 onPrefillPrompt={(p, modelId) => {
                   if (p) setPrefilledPrompt(p);
                   if (modelId) setPrefilledModelId(modelId);
-                  setCurrentTab('dispatch');
+                  handleNavigateTab('dispatch');
                 }}
               />
             )}
@@ -450,7 +450,7 @@ export default function App() {
               <ContextLedgerView
                 ledger={ledger}
                 activePersona={activePersona}
-                onNavigateTab={setCurrentTab}
+                onNavigateTab={handleNavigateTab}
                 persistenceMode={persistenceMode}
                 onTogglePersistenceMode={setPersistenceMode}
               />
@@ -462,10 +462,10 @@ export default function App() {
                 onAddModel={handleAddModel}
                 onUpdateModelStatus={handleUpdateModelStatus}
                 activePersona={activePersona}
-                onNavigateTab={setCurrentTab}
+                onNavigateTab={handleNavigateTab}
                 onSelectModelForDispatch={(modelId) => {
                   setPrefilledModelId(modelId);
-                  setCurrentTab('dispatch');
+                  handleNavigateTab('dispatch');
                 }}
               />
             )}
@@ -473,14 +473,14 @@ export default function App() {
             {currentTab === 'teams' && (
               <TeamGovernance
                 activePersona={activePersona}
-                onNavigateTab={setCurrentTab}
+                onNavigateTab={handleNavigateTab}
                 onOpenCompanyAdminWizard={() => setIsCompanyAdminWizardOpen(true)}
               />
             )}
 
             {currentTab === 'admin' && (
               <AdminConsole
-                onNavigateTab={setCurrentTab}
+                onNavigateTab={handleNavigateTab}
                 persistenceMode={persistenceMode}
                 onTogglePersistenceMode={setPersistenceMode}
               />
@@ -488,7 +488,7 @@ export default function App() {
 
             {currentTab === 'research' && (
               <MarketResearchView 
-                onNavigateTab={setCurrentTab}
+                onNavigateTab={handleNavigateTab}
               />
             )}
 

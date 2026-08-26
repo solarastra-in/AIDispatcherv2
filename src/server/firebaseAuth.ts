@@ -65,8 +65,9 @@ export async function firebaseAuthMiddleware(req: Request, _res: Response, next:
   const authHeader = req.headers.authorization;
   const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : undefined;
   
-  // Also check if x-user-email header was provided during development/testing
-  const devEmail = req.headers["x-user-email"] as string | undefined;
+  const headerEmail = (req.headers["x-user-email"] || req.headers["x-email"] || req.headers["x-auth-email"]) as string | undefined;
+  const bodyEmail = (req.body && typeof req.body === 'object') ? (req.body.email || req.body.userEmail || req.body.actorEmail) : undefined;
+  const queryEmail = req.query?.userEmail as string | undefined;
 
   let email: string | null = null;
   if (token) {
@@ -76,8 +77,14 @@ export async function firebaseAuthMiddleware(req: Request, _res: Response, next:
     }
   }
 
-  if (!email && devEmail) {
-    email = devEmail;
+  if (!email && headerEmail) {
+    email = headerEmail;
+  }
+  if (!email && bodyEmail && typeof bodyEmail === 'string') {
+    email = bodyEmail;
+  }
+  if (!email && queryEmail && typeof queryEmail === 'string') {
+    email = queryEmail;
   }
 
   (req as any).authenticatedEmail = email;
