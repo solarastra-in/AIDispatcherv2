@@ -1075,39 +1075,9 @@ export const DispatchConsole: React.FC<DispatchConsoleProps> = ({
                     />
                   </div>
 
-                  {/* 2. File Attachment Dropzone & Multimodal Upload */}
-                  <div className="bg-slate-900/60 border border-white/10 rounded-2xl p-4 sm:p-5 backdrop-blur-xl shadow-xl space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Paperclip className="w-4 h-4 text-orange-400" />
-                        <h3 className="text-xs font-bold text-slate-200 uppercase font-mono tracking-wider">
-                          Attach Files &amp; Documents (PDF, Excel, Images, Code, CSV)
-                        </h3>
-                      </div>
-                      {uploadedFiles.length > 0 && (
-                        <span className="px-2.5 py-0.5 rounded-full text-[10px] bg-orange-500/20 text-orange-300 font-bold border border-orange-500/30">
-                          {uploadedFiles.length} file{uploadedFiles.length !== 1 ? 's' : ''} attached
-                        </span>
-                      )}
-                    </div>
-                    
-                    <FileUploadZone
-                      files={uploadedFiles}
-                      onFilesChange={(files) => setUploadedFiles(files)}
-                    />
-
-                    {/* Preprocessing Optimization Toggle */}
-                    <div className="pt-2">
-                      <PreprocessingToggle
-                        enabled={optimizeFiles}
-                        onToggle={setOptimizeFiles}
-                        files={uploadedFiles}
-                      />
-                    </div>
-                  </div>
-
-                  {/* 3. Expandable Composer with Prompt Redrafting & Format Selection */}
+                  {/* 2. Unified Composer & Attachment Assistant */}
                   <div className="bg-slate-900/80 border border-white/10 rounded-2xl p-4 sm:p-5 backdrop-blur-xl shadow-xl space-y-4">
+                    {/* Header */}
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <Sliders className="w-4 h-4 text-orange-400" />
@@ -1120,6 +1090,7 @@ export const DispatchConsole: React.FC<DispatchConsoleProps> = ({
                       </span>
                     </div>
 
+                    {/* Expandable Composer Textarea & Format Selection */}
                     <ExpandableComposer
                       sessionId={activeSessionId}
                       initialDraft={inputPrompt}
@@ -1128,6 +1099,35 @@ export const DispatchConsole: React.FC<DispatchConsoleProps> = ({
                         handleSendMessage(effectivePrompt, false, customFormat, rawUserPrompt);
                       }}
                     />
+
+                    {/* Attach Files & Documents (PDF, Excel, Images, Code, CSV) - Positioned cleanly UNDER the Composer */}
+                    <div className="pt-3 border-t border-slate-800 space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Paperclip className="w-3.5 h-3.5 text-orange-400" />
+                          <h4 className="text-[11px] font-bold text-slate-300 uppercase font-mono tracking-wider">
+                            Attach Files &amp; Documents (PDF, Excel, Images, Code, CSV)
+                          </h4>
+                        </div>
+                        {uploadedFiles.length > 0 && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] bg-orange-500/20 text-orange-300 font-bold border border-orange-500/30">
+                            {uploadedFiles.length} file{uploadedFiles.length !== 1 ? 's' : ''} attached
+                          </span>
+                        )}
+                      </div>
+
+                      <FileUploadZone
+                        files={uploadedFiles}
+                        onFilesChange={(files) => setUploadedFiles(files)}
+                      />
+
+                      {/* Preprocessing Optimization Toggle */}
+                      <PreprocessingToggle
+                        enabled={optimizeFiles}
+                        onToggle={setOptimizeFiles}
+                        files={uploadedFiles}
+                      />
+                    </div>
                   </div>
 
                   {/* 4. Quick-Start Archetype Suggestions */}

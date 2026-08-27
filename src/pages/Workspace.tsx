@@ -618,41 +618,19 @@ export default function Workspace({
                     />
                   </div>
 
-                  {/* Collapsible File Upload Zone */}
-                  <div className="px-5 py-1.5 border-b border-slate-800/80 bg-slate-950/40">
-                    <button
-                      onClick={() => setShowFileUpload((s) => !s)}
-                      className="flex items-center gap-2 text-xs font-mono text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
-                    >
-                      {showFileUpload ? <ChevronDown className="w-3.5 h-3.5 text-orange-400" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-500" />}
-                      <Paperclip className="w-3.5 h-3.5 text-orange-400" />
-                      <span>Attach Documents / Images for Multimodal Analysis</span>
-                      {uploadedFiles.length > 0 && (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] bg-orange-500/20 text-orange-300 font-bold border border-orange-500/30">
-                          {uploadedFiles.length} file{uploadedFiles.length !== 1 ? "s" : ""}
-                        </span>
-                      )}
-                    </button>
-
-                    {showFileUpload && (
-                      <div className="mt-2 pt-2 border-t border-slate-800">
-                        <FileUploadZone files={uploadedFiles} onFilesChange={setUploadedFiles} />
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Preprocessing Optimization Toggle */}
-                  <div className="px-5 py-1 border-b border-slate-800/80 bg-slate-950/40">
-                    <PreprocessingToggle enabled={optimizeFiles} onToggle={setOptimizeFiles} files={uploadedFiles} />
-                  </div>
-
-                  {/* Expandable Composer Section */}
-                  <div className="p-3 sm:p-4 bg-slate-900/90">
+                  {/* Expandable Composer Section with Files Underneath */}
+                  <div className="p-3 sm:p-4 bg-slate-900/90 space-y-3">
                     <ExpandableComposer
                       sessionId={sessionId || "session_default"}
                       onSend={handleSend}
                       initialDraft={prefilledPrompt}
                     />
+
+                    {/* Attach Files & Documents (PDF, Excel, Images, Code, CSV) - Positioned cleanly UNDER Composer */}
+                    <div className="pt-2.5 border-t border-slate-800 space-y-2">
+                      <FileUploadZone files={uploadedFiles} onFilesChange={setUploadedFiles} />
+                      <PreprocessingToggle enabled={optimizeFiles} onToggle={setOptimizeFiles} files={uploadedFiles} />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -957,41 +935,19 @@ export default function Workspace({
                   />
                 </div>
 
-                {/* Collapsible File Upload Zone */}
-                <div className="px-5 py-2 border-b border-slate-800/80 bg-slate-950/40">
-                  <button
-                    onClick={() => setShowFileUpload((s) => !s)}
-                    className="flex items-center gap-2 text-xs font-mono text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
-                  >
-                    {showFileUpload ? <ChevronDown className="w-3.5 h-3.5 text-orange-400" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-500" />}
-                    <Paperclip className="w-3.5 h-3.5 text-orange-400" />
-                    <span>Attach Documents / Images for Multimodal Analysis</span>
-                    {uploadedFiles.length > 0 && (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] bg-orange-500/20 text-orange-300 font-bold border border-orange-500/30">
-                        {uploadedFiles.length} file{uploadedFiles.length !== 1 ? "s" : ""}
-                      </span>
-                    )}
-                  </button>
-
-                  {showFileUpload && (
-                    <div className="mt-2.5 pt-2.5 border-t border-slate-800">
-                      <FileUploadZone files={uploadedFiles} onFilesChange={setUploadedFiles} />
-                    </div>
-                  )}
-                </div>
-
-                {/* Preprocessing Optimization Toggle */}
-                <div className="px-5 py-1.5 border-b border-slate-800/80 bg-slate-950/40">
-                  <PreprocessingToggle enabled={optimizeFiles} onToggle={setOptimizeFiles} files={uploadedFiles} />
-                </div>
-
-                {/* Expandable Composer Section */}
-                <div className="p-4 sm:p-5 bg-slate-900/80">
+                {/* Expandable Composer Section with Files Underneath */}
+                <div className="p-4 sm:p-5 bg-slate-900/80 space-y-3">
                   <ExpandableComposer
                     sessionId={sessionId || "session_default"}
                     onSend={handleSend}
                     initialDraft={prefilledPrompt}
                   />
+
+                  {/* Attach Files & Documents (PDF, Excel, Images, Code, CSV) - Positioned cleanly UNDER Composer */}
+                  <div className="pt-3 border-t border-slate-800 space-y-2">
+                    <FileUploadZone files={uploadedFiles} onFilesChange={setUploadedFiles} />
+                    <PreprocessingToggle enabled={optimizeFiles} onToggle={setOptimizeFiles} files={uploadedFiles} />
+                  </div>
                 </div>
               </div>
             </div>

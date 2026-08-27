@@ -83,33 +83,35 @@ export default function PreprocessingToggle({
   }, [files, enabled]);
 
   return (
-    <div className="flex items-center justify-between gap-3 mb-2">
+    <div className="flex items-center justify-between gap-3 flex-wrap py-1">
       <label className="flex items-center gap-2 cursor-pointer select-none">
         <button
           type="button"
           role="switch"
           aria-checked={enabled}
           onClick={() => onToggle(!enabled)}
-          className={`w-8 h-4.5 rounded-full relative transition-colors ${enabled ? "bg-[#FF8A3D]" : "bg-[#2A2F38]"}`}
+          className={`w-8 h-4.5 rounded-full relative transition-colors shrink-0 ${enabled ? "bg-orange-500" : "bg-slate-800"}`}
         >
-          <span className={`absolute top-0.5 w-3.5 h-3.5 rounded-full bg-[#0F1216] transition-transform ${enabled ? "translate-x-4" : "translate-x-0.5"}`} />
+          <span className={`absolute top-0.5 w-3.5 h-3.5 rounded-full bg-slate-950 transition-transform ${enabled ? "translate-x-4" : "translate-x-0.5"}`} />
         </button>
-        <span className="text-xs text-[#93999F]">Optimize files before sending</span>
+        <span className="text-xs font-mono text-slate-400 whitespace-nowrap">Optimize files before sending (AST &amp; Deduplication)</span>
       </label>
 
       {enabled && files.length > 0 && (
         <span className="text-[11px] font-mono">
           {checking ? (
-            <span className="text-[#5B6169]">checking…</span>
+            <span className="text-slate-500">Checking savings…</span>
           ) : stats && stats.totalTokensSaved > 0 ? (
-            <span className="text-[#4FD1C5]">▾ saves ~{stats.totalTokensSaved} tokens ({stats.percentSaved}%)</span>
+            <span className="text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+              ⚡ Saves ~{stats.totalTokensSaved} tokens ({stats.percentSaved}%)
+            </span>
           ) : stats ? (
-            <span className="text-[#5B6169]">no savings available for these file(s)</span>
+            <span className="text-slate-500">No AST compression delta</span>
           ) : null}
         </span>
       )}
       {!enabled && files.length > 0 && (
-        <span className="text-[11px] text-[#5B6169]">sending files unmodified</span>
+        <span className="text-[11px] font-mono text-slate-500">Sending files uncompressed</span>
       )}
     </div>
   );

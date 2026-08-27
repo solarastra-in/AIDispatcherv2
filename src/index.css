@@ -70,3 +70,22 @@
   border: 1px solid rgba(255, 255, 255, 0.07);
 }
 
+/* Fullscreen portal isolation - strictly hides all persistent nav, header, trial bar, and footer */
+html.whyor-fullscreen-active,
+body.whyor-fullscreen-active {
+  overflow: hidden !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+body.whyor-fullscreen-active > #root > div > header,
+body.whyor-fullscreen-active > #root > div > footer,
+body.whyor-fullscreen-active nav,
+body.whyor-fullscreen-active header,
+body.whyor-fullscreen-active footer,
+body.whyor-fullscreen-active .whyor-nav-header,
+body.whyor-fullscreen-active .whyor-trial-banner,
+body.whyor-fullscreen-active .whyor-telemetry-ticker {
+  display: none !important;
+}
+
